@@ -128,7 +128,13 @@ function factor(name, t) {
 }
 
 function runQuery(body) {
-  const { accounts = [], dimensions = [], metrics = [], dateRange = {}, filters = [] } = body;
+  const { accounts = [], dimensions = [], metrics = [], dateRange = {}, filters = [], sort = [] } = body;
+  // Same rule as real TMR
+  for (const s of sort) {
+    if (![...dimensions, ...metrics].includes(s.fieldId)) {
+      return { status: 400, body: { success: false, error: { code: 'VALIDATION_FAILED', message: `Sort field "${s.fieldId}" must be one of the query's dimensions or metrics.` } } };
+    }
+  }
   for (const f of [...metrics, ...dimensions]) {
     if (!COMMON.has(f) && !/^(ttads|fads|gadw)_/.test(f)) {
       return { status: 400, body: { error: { message: `Unknown field "${f}"` } } };

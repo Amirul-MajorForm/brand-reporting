@@ -81,10 +81,16 @@ const queryOnce = (accounts, metrics, dateRange, { dimensions = ['campaign_name'
   metrics,
   dateRange,
   ...(filters?.length ? { filters } : {}),
-  sort: dimensions.includes('date')
-    ? [{ fieldId: 'date', direction: 'asc' }]
-    : [{ fieldId: 'amount_spent', direction: 'desc' }],
+  sort: sortFor(dimensions, metrics),
 }, { priority, timeoutMs });
+
+// TMR only sorts by a field that is in the query: by date for daily rows, else
+// by spend when requested, else by the first metric (e.g. impressions)
+function sortFor(dimensions, metrics) {
+  if (dimensions.includes('date')) return [{ fieldId: 'date', direction: 'asc' }];
+  const field = metrics.includes('amount_spent') ? 'amount_spent' : metrics[0];
+  return field ? [{ fieldId: field, direction: 'desc' }] : [];
+}
 
 const isoDay = t => new Date(t).toISOString().slice(0, 10);
 
