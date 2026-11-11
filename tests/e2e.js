@@ -2,7 +2,7 @@
 // Needs the frontend built (npm run build). Uses the pre-installed Playwright.
 import { createRequire } from 'module';
 import { mkdirSync } from 'fs';
-import { startStack, PASSWORD } from './helpers.js';
+import { startStack, PASSWORD, EDITOR_PASSWORD } from './helpers.js';
 
 const require = createRequire(import.meta.url);
 const { chromium } = require('playwright');
@@ -97,6 +97,7 @@ try {
     const ext = await dialog.getByRole('link', { name: /View ad as it appears/ }).first().getAttribute('rel');
     check(/noopener/.test(ext) && /noreferrer/.test(ext), `${width}: preview links open safely`);
     check(!FORBIDDEN.test(await dialog.innerText()), `${width}: Top ads has no internal wording`);
+    check(await dialog.getByText('View rate (3s)').count() >= 1, `${width}: Meta video ads show the 3-second view rate`);
     await page.screenshot({ path: `${out}/top-ads-${width}.png` });
     await page.keyboard.press('Escape');
 
@@ -183,6 +184,52 @@ try {
     await page.getByLabel('Password').waitFor();
     check(true, `${width}: sign out returns to the login screen and stays there after reload`);
     check(consoleErrors.filter(e => !/401/.test(e)).length === 0, `${width}: no console errors ${consoleErrors.join(' | ')}`);
+    await page.close();
+  }
+
+  // ---------------------------------------------------------------- weekly commentary (editor, then client)
+  {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    await page.goto(stack.base);
+    await page.getByLabel('Password').fill(EDITOR_PASSWORD);
+    await page.getByRole('button', { name: 'Sign in' }).click();
+    await page.getByTestId('editor-badge').waitFor();
+    check(true, 'editor: MajorForm editor badge after signing in with the editor password');
+    const box = page.getByTestId('insights');
+    await box.waitFor();
+    await box.scrollIntoViewIfNeeded();
+    check(await box.getByText(/No commentary yet/).count() === 1, 'editor: empty week explains the Monday 12:00 schedule');
+    await box.getByRole('button', { name: 'Generate now' }).click();
+    await box.getByText('Executive summary').waitFor({ timeout: 20000 });
+    check(await box.getByText('Draft · not visible to client').count() === 1, 'editor: new draft is marked as not visible to the client');
+    await box.screenshot({ path: `${out}/insights-editor-draft.png` });
+    await box.getByRole('button', { name: 'Edit' }).click();
+    const area = box.getByLabel('Commentary');
+    await area.fill(`${await area.inputValue()}\n\nShopee 11.11 creatives go live **Wednesday**.`);
+    await box.screenshot({ path: `${out}/insights-editor-editing.png` });
+    await box.getByRole('button', { name: 'Save draft' }).click();
+    await box.getByText(/Draft saved/).waitFor();
+    await box.getByRole('button', { name: 'Publish to client' }).click();
+    await box.getByText('Published', { exact: true }).waitFor();
+    check(true, 'editor: draft edited, saved and published');
+    await page.getByRole('button', { name: 'Sign out' }).click();
+    await page.getByLabel('Password').fill(PASSWORD);
+    await page.getByRole('button', { name: 'Sign in' }).click();
+    const cbox = page.getByTestId('insights');
+    await cbox.waitFor();
+    await cbox.scrollIntoViewIfNeeded();
+    const ctext = await cbox.innerText();
+    check(/Shopee 11.11 creatives go live Wednesday/.test(ctext), 'client: sees the published commentary with the edit');
+    check(await cbox.getByRole('button', { name: /Edit|Publish|Regenerate|Generate/ }).count() === 0, 'client: no editing controls');
+    check(await page.getByTestId('editor-badge').count() === 0, 'client: no editor badge');
+    check(!/Claude|draft/i.test(ctext), 'client: no mention of drafts or Claude');
+    await page.getByRole('button', { name: 'Commerce Lens' }).click();
+    await page.getByTestId('insights').waitFor();
+    check(true, 'client: commentary also shows on Commerce Lens');
+    await page.getByRole('button', { name: 'Brand Lens' }).click();
+    await page.getByTestId('insights').waitFor();
+    await page.getByTestId('insights').scrollIntoViewIfNeeded();
+    await page.getByTestId('insights').screenshot({ path: `${out}/insights-client.png` });
     await page.close();
   }
 } finally {

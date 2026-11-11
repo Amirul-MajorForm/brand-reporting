@@ -1,9 +1,11 @@
-// Login for the client dashboard: one shared password (DASHBOARD_PASSWORD).
+// Login for the client dashboard. Two shared passwords, two roles:
+//   DASHBOARD_PASSWORD -> 'client'  (OATSIDE: view only)
+//   EDITOR_PASSWORD    -> 'editor'  (MajorForm: also drafts / edits / publishes commentary)
 //
 // Sessions are stateless signed cookies, so they survive Railway restarts and
 // redeploys without a database:
-//   cookie value = <expiresAt>.<HMAC-SHA256(expiresAt + password fingerprint)>
-// Changing DASHBOARD_PASSWORD or SESSION_SECRET signs everyone out.
+//   cookie value = <role>.<expiresAt>.<HMAC-SHA256(role + expiresAt + password fingerprint)>
+// Changing either password or SESSION_SECRET signs everyone out.
 // The cookie is httpOnly, SameSite=Lax, and Secure whenever the request came in
 // over HTTPS (Railway terminates TLS and sets X-Forwarded-Proto).
 
@@ -13,6 +15,8 @@ export const COOKIE_NAME = 'os_session';
 const SESSION_HOURS = Number(process.env.SESSION_TTL_HOURS) || 24 * 7;
 
 const PASSWORD = process.env.DASHBOARD_PASSWORD || '';
+const EDITOR_PASSWORD = process.env.EDITOR_PASSWORD || '';
+export const ROLES = ['client', 'editor'];
 let SECRET = process.env.SESSION_SECRET || '';
 if (!SECRET) {
   SECRET = randomBytes(32).toString('hex');
@@ -20,12 +24,13 @@ if (!SECRET) {
 }
 if (!PASSWORD) console.error('[auth] DASHBOARD_PASSWORD is not set: nobody can sign in until it is.');
 else if (PASSWORD.length < 12) console.warn('[auth] DASHBOARD_PASSWORD is shorter than 12 characters; use a longer one.');
+if (EDITOR_PASSWORD && EDITOR_PASSWORD === PASSWORD) console.error('[auth] EDITOR_PASSWORD equals DASHBOARD_PASSWORD: editor sign-in is disabled until they differ.');
 
 const sha256 = s => createHash('sha256').update(String(s)).digest();
-const PASSWORD_FINGERPRINT = sha256(`pw:${PASSWORD}`).toString('hex');
+const PASSWORD_FINGERPRINT = sha256(`pw:${PASSWORD}|${EDITOR_PASSWORD}`).toString('hex');
 
-function sign(expiresAt) {
-  return createHmac('sha256', SECRET).update(`${expiresAt}.${PASSWORD_FINGERPRINT}`).digest('base64url');
+function sign(role, expiresAt) {
+  return createHmac('sha256', SECRET).update(`${role}.${expiresAt}.${PASSWORD_FINGERPRINT}`).digest('base64url');
 }
 
 function safeEqual(a, b) {
@@ -33,9 +38,13 @@ function safeEqual(a, b) {
   return timingSafeEqual(sha256(a), sha256(b));
 }
 
+// Returns the role for a correct password, or null. Both comparisons always
+// run, so timing does not reveal which password matched.
 export function checkPassword(candidate) {
-  if (!PASSWORD || typeof candidate !== 'string' || candidate.length > 512) return false;
-  return safeEqual(candidate, PASSWORD);
+  if (typeof candidate !== 'string' || candidate.length > 512) return null;
+  const isClient = !!PASSWORD && safeEqual(candidate, PASSWORD);
+  const isEditor = !!EDITOR_PASSWORD && EDITOR_PASSWORD !== PASSWORD && safeEqual(candidate, EDITOR_PASSWORD);
+  return isEditor ? 'editor' : isClient ? 'client' : null;
 }
 
 function parseCookies(header) {
@@ -49,15 +58,20 @@ function parseCookies(header) {
   return out;
 }
 
-export function isAuthenticated(req) {
-  if (!PASSWORD) return false;
+// The session's role ('client' | 'editor'), or null when not signed in
+export function sessionRole(req) {
+  if (!PASSWORD && !EDITOR_PASSWORD) return null;
   const value = parseCookies(req.headers.cookie)[COOKIE_NAME];
-  if (!value) return false;
-  const [exp, sig] = value.split('.');
+  if (!value) return null;
+  const [role, exp, sig] = value.split('.');
   const expiresAt = Number(exp);
-  if (!Number.isFinite(expiresAt) || expiresAt < Date.now() || !sig) return false;
-  return safeEqual(sig, sign(expiresAt));
+  if (!ROLES.includes(role) || !Number.isFinite(expiresAt) || expiresAt < Date.now() || !sig) return null;
+  if (role === 'editor' && (!EDITOR_PASSWORD || EDITOR_PASSWORD === PASSWORD)) return null;
+  if (role === 'client' && !PASSWORD) return null;
+  return safeEqual(sig, sign(role, expiresAt)) ? role : null;
 }
+
+export const isAuthenticated = req => sessionRole(req) != null;
 
 function cookieAttributes(req, maxAgeSeconds) {
   return [
@@ -66,9 +80,9 @@ function cookieAttributes(req, maxAgeSeconds) {
   ].join('; ');
 }
 
-export function setSessionCookie(req, res) {
+export function setSessionCookie(req, res, role) {
   const expiresAt = Date.now() + SESSION_HOURS * 3600 * 1000;
-  res.setHeader('Set-Cookie', `${COOKIE_NAME}=${expiresAt}.${sign(expiresAt)}; ${cookieAttributes(req, SESSION_HOURS * 3600)}`);
+  res.setHeader('Set-Cookie', `${COOKIE_NAME}=${role}.${expiresAt}.${sign(role, expiresAt)}; ${cookieAttributes(req, SESSION_HOURS * 3600)}`);
 }
 
 export function clearSessionCookie(req, res) {
@@ -77,8 +91,15 @@ export function clearSessionCookie(req, res) {
 
 // Every /api route except the login endpoints goes through this
 export function requireAuth(req, res, next) {
-  if (isAuthenticated(req)) return next();
+  const role = sessionRole(req);
+  if (role) { req.role = role; return next(); }
   res.status(401).json({ error: 'Please sign in.' });
+}
+
+// MajorForm-only routes (commentary drafts and edits)
+export function requireEditor(req, res, next) {
+  if (sessionRole(req) === 'editor') return next();
+  res.status(403).json({ error: 'Only MajorForm editors can do this.' });
 }
 
 // ---------------------------------------------------------------- rate limiting

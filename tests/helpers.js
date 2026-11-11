@@ -4,10 +4,13 @@ import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import net from 'net';
+import { mkdtempSync } from 'fs';
+import { tmpdir } from 'os';
 import { startFakeTMR } from './fake-tmr.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 export const PASSWORD = 'correct-horse-battery-staple';
+export const EDITOR_PASSWORD = 'majorform-editor-test-pass';
 
 const freePort = () => new Promise(resolve => {
   const s = net.createServer().listen(0, '127.0.0.1', () => { const { port } = s.address(); s.close(() => resolve(port)); });
@@ -16,6 +19,7 @@ const freePort = () => new Promise(resolve => {
 export async function startStack(extraEnv = {}) {
   const fake = await startFakeTMR();
   const port = await freePort();
+  const dataDir = extraEnv.DATA_DIR || mkdtempSync(join(tmpdir(), 'oatside-commentary-'));
   const fakeBase = `http://127.0.0.1:${fake.port}`;
   const child = spawn(process.execPath, [join(ROOT, 'backend/server.js')], {
     cwd: ROOT,
@@ -29,6 +33,11 @@ export async function startStack(extraEnv = {}) {
       GOALS_SHEET_PUB_URL: `${fakeBase}/sheet/pub`,
       COMMERCE_TREND_START: '2026-09-01',
       DASHBOARD_PASSWORD: PASSWORD,
+      EDITOR_PASSWORD,
+      ANTHROPIC_API_KEY: 'test-anthropic-key',
+      ANTHROPIC_BASE_URL: `${fakeBase}/anthropic`,
+      DATA_DIR: dataDir,
+      COMMENTARY_ENABLED: 'false', // the schedule is unit-tested; tests drive generation directly
       SESSION_SECRET: 'test-session-secret-0123456789abcdef',
       ...extraEnv,
     },
@@ -45,8 +54,9 @@ export async function startStack(extraEnv = {}) {
   });
   const base = `http://127.0.0.1:${port}`;
   return {
-    base, fakeBase, logs: () => logs,
+    base, fakeBase, logs: () => logs, dataDir,
     tmrRequests: async () => (await fetch(`${fakeBase}/__fake/requests`)).json(),
+    claudeRequests: async () => (await fetch(`${fakeBase}/__fake/claude`)).json(),
     setPreviewTimeout: (ms, count) => fetch(`${fakeBase}/__fake/preview-timeout`, { method: 'POST', body: JSON.stringify({ ms, count }) }),
     setDelay: ms => fetch(`${fakeBase}/__fake/delay`, { method: 'POST', body: JSON.stringify({ ms }) }),
     failNext: (status, message, count = 1) => fetch(`${fakeBase}/__fake/fail`, { method: 'POST', body: JSON.stringify({ status, message, count }) }),
@@ -54,11 +64,11 @@ export async function startStack(extraEnv = {}) {
   };
 }
 
-export async function signIn(base) {
+export async function signIn(base, password = PASSWORD) {
   const res = await fetch(`${base}/api/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Origin: base },
-    body: JSON.stringify({ password: PASSWORD }),
+    body: JSON.stringify({ password }),
   });
   if (!res.ok) throw new Error(`login failed ${res.status}`);
   return res.headers.get('set-cookie').split(';')[0];

@@ -31,9 +31,14 @@ export const PREVIEW_DIMENSIONS = {
 // its run-query API does not reject that, it hangs until a 504 after 60s.
 // GMV Max reports at campaign level only, so TikTok ads have no revenue here.
 export const ADS_METRICS = {
-  meta: ['amount_spent', 'impressions', 'clicks', 'fads_video_thruplay_watched_actions'],
-  tiktok: ['amount_spent', 'impressions', 'clicks', 'ttads_video_play_actions'],
+  meta: ['amount_spent', 'impressions', 'clicks', 'fads_video_thruplay_watched_actions', 'fads_video_views'],
+  tiktok: ['amount_spent', 'impressions', 'clicks', 'ttads_video_play_actions', 'ttads_video_watched_6s'],
 };
+
+// View rate = hook views / impressions. TikTok: 6-second views. Meta has no
+// 6-second view in TMR, so it uses 3-second views ("video_views"), Meta's
+// standard hook-rate measure.
+export const VIEW_RATE_BASIS = { tiktok: '6s', meta: '3s' };
 
 // Orders / revenue per ad, by source (Meta only; see above for TikTok)
 export const ADS_REVENUE = {
@@ -112,13 +117,14 @@ export function buildTopAds(rows, platform, { limit = 12, campaign = '' } = {}) 
     if (!name) continue;
     const spend = parseFloat(r.spend) || 0;
     const ad = byAd.get(name) || {
-      ad_name: name, spend: 0, impressions: 0, clicks: 0, video_views: 0, thruplays: 0, orders: 0, revenue: 0,
+      ad_name: name, spend: 0, impressions: 0, clicks: 0, video_views: 0, thruplays: 0, hook_views: 0, orders: 0, revenue: 0,
     };
     ad.spend += spend;
     ad.impressions += parseFloat(r.impressions) || 0;
     ad.clicks += parseFloat(r.clicks) || 0;
     ad.video_views += parseFloat(r.video_play_actions) || 0;
     ad.thruplays += parseFloat(r.video_thruplay_watched_actions) || 0;
+    ad.hook_views += parseFloat(platform === 'tiktok' ? r.video_watched_6s : r.video_views) || 0;
     ad.orders += r.orders || 0;
     ad.revenue += r.revenue || 0;
     byAd.set(name, ad);
@@ -134,6 +140,9 @@ export function buildTopAds(rows, platform, { limit = 12, campaign = '' } = {}) 
       cpa: a.spend > 0 && a.orders > 0 ? a.spend / a.orders : null,
       video_views: a.video_views || null,
       thruplays: a.thruplays || null,
+      // Only for video ads (some hook views); null for static ads
+      view_rate: a.hook_views > 0 && a.impressions > 0 ? (a.hook_views / a.impressions) * 100 : null,
+      view_rate_basis: VIEW_RATE_BASIS[platform],
     }))
     .sort((a, b) => b.spend - a.spend || b.impressions - a.impressions);
 

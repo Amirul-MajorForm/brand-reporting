@@ -83,7 +83,7 @@ function FooterButton({ onClick, icon, label }) {
   );
 }
 
-export default function Sidebar({ activeTab, onTabChange, darkMode, onToggleDark, onLogout }) {
+export default function Sidebar({ activeTab, onTabChange, darkMode, onToggleDark, onLogout, role }) {
   return (
     <nav aria-label="Main" style={{
       width: 208,
@@ -100,6 +100,12 @@ export default function Sidebar({ activeTab, onTabChange, darkMode, onToggleDark
       <div style={{ padding: '24px 20px 20px', borderBottom: `1px solid ${S.border}` }}>
         <Wordmark />
         <div style={{ fontSize: 11.5, color: S.label, marginTop: 8 }}>{BRAND.product}</div>
+        {role === 'editor' && (
+          <div data-testid="editor-badge" style={{ display: 'inline-block', marginTop: 10, fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase',
+            padding: '3px 8px', borderRadius: 999, background: C.yellow, color: '#000' }}>
+            MajorForm editor
+          </div>
+        )}
       </div>
 
       <div style={{ flex: 1, padding: '20px 12px', overflowY: 'auto' }}>

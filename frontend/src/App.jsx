@@ -10,6 +10,7 @@ import TrendPanel from './components/TrendPanel.jsx';
 import Sidebar from './components/Sidebar.jsx';
 import Login from './components/Login.jsx';
 import Splash from './components/Splash.jsx';
+import InsightsBox from './components/InsightsBox.jsx';
 
 // The loading screen stays up until the first numbers arrive, but never longer
 // than this (the tables then show their own loading placeholders)
@@ -35,11 +36,12 @@ function useDarkMode() {
 export default function App() {
   const [darkMode, setDarkMode] = useDarkMode();
   const [auth, setAuth] = useState('checking'); // checking | in | out
+  const [role, setRole] = useState(null); // client | editor
   const theme = darkMode ? DARK : LIGHT;
 
   useEffect(() => {
     setUnauthorizedHandler(() => setAuth('out'));
-    fetchSession().then(r => setAuth(r.authenticated ? 'in' : 'out')).catch(() => setAuth('out'));
+    fetchSession().then(r => { setRole(r.role || null); setAuth(r.authenticated ? 'in' : 'out'); }).catch(() => setAuth('out'));
   }, []);
 
   const handleLogout = useCallback(async () => {
@@ -48,11 +50,11 @@ export default function App() {
   }, []);
 
   if (auth === 'checking') return <Splash />;
-  if (auth === 'out') return <Login theme={theme} onSuccess={() => setAuth('in')} />;
-  return <Dashboard darkMode={darkMode} setDarkMode={setDarkMode} onLogout={handleLogout} />;
+  if (auth === 'out') return <Login theme={theme} onSuccess={r => { setRole(r || 'client'); setAuth('in'); }} />;
+  return <Dashboard darkMode={darkMode} setDarkMode={setDarkMode} onLogout={handleLogout} role={role} />;
 }
 
-function Dashboard({ darkMode, setDarkMode, onLogout }) {
+function Dashboard({ darkMode, setDarkMode, onLogout, role }) {
   const [market, setMarket] = useState('sg');
   const [dateRange, setDateRange] = useState('7');
   const [customStart, setCustomStart] = useState('');
@@ -275,6 +277,7 @@ function Dashboard({ darkMode, setDarkMode, onLogout }) {
         darkMode={darkMode}
         onToggleDark={() => setDarkMode(d => !d)}
         onLogout={onLogout}
+        role={role}
       />
 
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: theme.bg }}>
@@ -340,6 +343,7 @@ function Dashboard({ darkMode, setDarkMode, onLogout }) {
                     trendLoaded={goals?.params === fetchParams && !!goals.data?.trendLoaded}
                   />
                   <CampaignTable theme={theme} data={marketData} loading={loading} onTrend={setTrendTarget} />
+                  {data && <InsightsBox market={market} marketName={marketName} role={role} theme={theme} />}
                 </>
               )}
 
@@ -364,6 +368,7 @@ function Dashboard({ darkMode, setDarkMode, onLogout }) {
                   }}
                 />
               )}
+              {isCommerce && data && <InsightsBox market={market} marketName={marketName} role={role} theme={theme} />}
 
             </main>
 

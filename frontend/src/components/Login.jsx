@@ -14,9 +14,9 @@ export default function Login({ theme, onSuccess }) {
     setBusy(true);
     setError(null);
     try {
-      await login(password);
+      const r = await login(password);
       setPassword('');
-      onSuccess();
+      onSuccess(r.role);
     } catch (err) {
       setError(err.message);
     } finally {

@@ -58,6 +58,13 @@ export const fetchCommerceMonthly = signal => request('/api/commerce/monthly', {
 export const fetchAdPreviews = (params, { campaign, platform, lens }, signal) =>
   request(withRange('/api/ads/previews', params, { campaign, platform, lens }), { signal });
 
+// Weekly commentary (published for clients; drafts + editing for MajorForm editors)
+export const fetchCommentary = (market, week, signal) =>
+  request(`/api/commentary?${new URLSearchParams({ market, ...(week ? { week } : {}) })}`, { signal });
+export const saveCommentary = (market, week, text) => request('/api/commentary', { method: 'PUT', body: { market, week, text } });
+export const publishCommentary = (market, week) => request('/api/commentary/publish', { method: 'POST', body: { market, week } });
+export const generateCommentary = (market, week) => request('/api/commentary/generate', { method: 'POST', body: { market, week } });
+
 // Commerce Lens "vs previous month": same tables for the same dates a month earlier
 export const fetchCommerceCompare = (params, signal) => request(withRange('/api/commerce/compare', params), { signal });
 

@@ -65,6 +65,8 @@ function AdCard({ ad, rank, theme, currency, commerce, platform, previewPending 
     ['Impr.', fmt(ad.impressions, 'compact')],
     ['CTR', fmt(ad.ctr, 'percent')],
     ['CPM', fmt(ad.cpm, 'currency', currency, { code: false })],
+    // Video ads only: hook views / impressions (6s on TikTok, 3s on Meta)
+    ...(ad.view_rate != null ? [[`View rate (${ad.view_rate_basis})`, fmt(ad.view_rate, 'percent')]] : []),
     ...(commerce
       ? [['ROAS', fmt(ad.roas, 'roas')], ['Orders', fmt(ad.orders || null, 'number')]]
       : platform === 'meta'
@@ -85,7 +87,7 @@ function AdCard({ ad, rank, theme, currency, commerce, platform, previewPending 
       </div>
       <dl style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px 12px', margin: 0, fontSize: 12 }}>
         {stats.map(([k, v], i) => (
-          <div key={k} style={{ display: 'flex', justifyContent: 'space-between', gap: 6, ...(i === 0 ? { gridColumn: '1 / -1' } : {}) }}>
+          <div key={k} style={{ display: 'flex', justifyContent: 'space-between', gap: 6, ...(i === 0 || k.startsWith('View rate') ? { gridColumn: '1 / -1' } : {}) }}>
             <dt style={{ color: theme.textMuted }}>{k}</dt>
             <dd style={{ margin: 0, fontWeight: 600, color: theme.textPrimary, whiteSpace: 'nowrap' }}>{v}</dd>
           </div>

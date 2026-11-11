@@ -49,8 +49,8 @@ test('forged, expired or tampered session cookies are rejected', async () => {
 });
 
 test('session endpoint reports state without leaking anything', async () => {
-  assert.deepEqual(await (await fetch(`${stack.base}/api/session`)).json(), { authenticated: false });
-  assert.deepEqual(await (await get('/api/session')).json(), { authenticated: true });
+  assert.deepEqual(await (await fetch(`${stack.base}/api/session`)).json(), { authenticated: false, role: null });
+  assert.deepEqual(await (await get('/api/session')).json(), { authenticated: true, role: 'client' });
 });
 
 // ---------------------------------------------------------------- login

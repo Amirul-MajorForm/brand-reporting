@@ -13,9 +13,13 @@ import { securityHeaders, sameOriginOnly } from './security.js';
 import { ADS_PLATFORMS, PREVIEW_DIMENSIONS, ADS_METRICS, ADS_REVENUE, ADS_TEXT_FIELDS, isAdLevelSafe, buildTopAds, buildPreviews } from './ads.js';
 import { comparisonRange, buildComparison } from './compare.js';
 import {
-  requireAuth, isAuthenticated, checkPassword, setSessionCookie, clearSessionCookie,
+  requireAuth, requireEditor, sessionRole, checkPassword, setSessionCookie, clearSessionCookie,
   loginBlocked, recordFailure, clearFailures,
 } from './auth.js';
+import { createCommentary } from './commentary/index.js';
+import { createStore, defaultStoreFile } from './commentary/store.js';
+import { writeCommentary, writerConfigured, MODEL as COMMENTARY_MODEL } from './commentary/writer.js';
+import { isWeekStart } from './commentary/weeks.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -217,7 +221,7 @@ async function makeQuerySplit(accounts, metrics, dateRange, opts = {}) {
 //   Meta CPAS:      collaborative-ads purchases / purchase value (CPAS_METRICS)
 const META_METRICS   = ['amount_spent', 'impressions', 'clicks', 'fads_reach', 'fads_video_views', 'fads_website_fb_landing_page_views',
                         'fads_all_purchases', 'fads_purchase_conversions_all', 'fads_video_thruplay_watched_actions'];
-const TIKTOK_METRICS = ['amount_spent', 'impressions', 'clicks', 'ttads_video_play_actions', 'ttads_reach', 'ttads_total_landing_page_view',
+const TIKTOK_METRICS = ['amount_spent', 'impressions', 'clicks', 'ttads_video_play_actions', 'ttads_video_watched_6s', 'ttads_reach', 'ttads_total_landing_page_view',
                         'ttads_gmv_cost', 'ttads_gmv_orders', 'ttads_gmv_gross_revenue'];
 const GOOGLE_METRICS = ['amount_spent', 'impressions', 'clicks', 'conversions', 'gadw_metrics_conversions_value'];
 const CPAS_METRICS   = ['amount_spent', 'impressions', 'clicks', 'fads_reach', 'fads_video_views',
@@ -281,12 +285,13 @@ app.get('/health', (_req, res) => res.json({ ok: true }));
 // Every /api request must come from this app's own origin (no CORS headers are
 // ever sent, so other sites cannot read responses either).
 app.use('/api', sameOriginOnly);
-app.use('/api', express.json({ limit: '2kb' }));
+app.use('/api', express.json({ limit: '64kb' })); // commentary text is the largest body
 
 // Login / logout / session status are the only routes open without a session
 app.get('/api/session', (req, res) => {
   res.set('Cache-Control', 'no-store');
-  res.json({ authenticated: isAuthenticated(req) });
+  const role = sessionRole(req);
+  res.json({ authenticated: !!role, role });
 });
 
 app.post('/api/login', (req, res) => {
@@ -297,15 +302,17 @@ app.post('/api/login', (req, res) => {
     res.set('Retry-After', String(wait));
     return res.status(429).json({ error: `Too many attempts. Please try again in ${Math.ceil(wait / 60)} minute${wait > 60 ? 's' : ''}.` });
   }
-  if (!checkPassword(req.body?.password)) {
+  const role = checkPassword(req.body?.password);
+  if (!role) {
     recordFailure(ip);
     console.warn(`[auth] failed sign-in from ${ip}`);
     // Small fixed delay slows guessing further
     return setTimeout(() => res.status(401).json({ error: 'Incorrect password.' }), 400);
   }
   clearFailures(ip);
-  setSessionCookie(req, res);
-  res.json({ authenticated: true });
+  setSessionCookie(req, res, role);
+  if (role === 'editor') console.log(`[auth] editor signed in from ${ip}`);
+  res.json({ authenticated: true, role });
 });
 
 app.post('/api/logout', (req, res) => {
@@ -835,6 +842,118 @@ app.get('/api/commerce/compare', async (req, res) => {
   } catch (err) {
     sendError(res, 'commerce compare', err);
   }
+});
+
+// ---------------------------------------------------------------- weekly commentary
+// Claude drafts each market's commentary on Monday (see commentary/); MajorForm
+// editors review, edit and publish it; the client only ever sees published text.
+const commentaryStore = createStore(process.env.COMMENTARY_FILE || defaultStoreFile());
+const commentary = createCommentary({
+  store: commentaryStore,
+  markets: MARKETS,
+  loadFx: async () => (await cached('goal_sheet', loadGoalSheet)).fx,
+  // Same data as the dashboard tables, at background priority (cached 1 hour)
+  loadData: async (week, prevWeek, twelveWeeks) => {
+    const load = async range => ({
+      brand: await fetchBrand(range, PREVIOUS_PERIOD_TTL, PRIORITY.background),
+      commerce: await fetchCommerce(range, PREVIOUS_PERIOD_TTL, PRIORITY.background),
+    });
+    return { cur: await load(week), prev: await load(prevWeek), avg: await load(twelveWeeks) };
+  },
+  writer: { write: writeCommentary, configured: () => writerConfigured() && !!TMR_API_KEY },
+});
+if (process.env.COMMENTARY_ENABLED !== 'false') commentary.start();
+
+const generating = new Map(); // "<week>|<market>" -> { startedAt, error? }
+const GENERATE_PER_DAY = 40;
+let generateLog = [];
+
+function marketParam(v) {
+  const m = typeof v === 'string' ? v.toLowerCase() : '';
+  return Object.hasOwn(MARKETS, m) ? m : null;
+}
+
+app.get('/api/commentary', (req, res) => {
+  const market = marketParam(req.query.market);
+  if (!market) return res.status(400).json({ error: 'Invalid request.' });
+  const editor = req.role === 'editor';
+  const stored = commentaryStore.weeks(market, { publishedOnly: !editor });
+  const latestWeek = commentary.latestWeek().startDate;
+  const weeks = editor && !stored.includes(latestWeek) ? [latestWeek, ...stored] : stored;
+  const asked = typeof req.query.week === 'string' && isWeekStart(req.query.week) ? req.query.week : null;
+  // Editors default to last week (even before a draft exists, so they can generate it);
+  // clients to the latest published week
+  const week = asked && (weeks.includes(asked) || (editor && asked === latestWeek)) ? asked
+    : editor ? latestWeek : (weeks[0] || null);
+  const entry = week ? commentaryStore.get(week, market) : null;
+
+  if (!editor) {
+    // Client: published text and figures only
+    return res.json({
+      weeks,
+      entry: entry?.published ? {
+        week: entry.week, prevWeek: entry.prevWeek, figures: entry.figures,
+        text: entry.published.text, publishedAt: entry.published.at,
+      } : null,
+    });
+  }
+  const job = generating.get(`${week || latestWeek}|${market}`);
+  res.json({
+    weeks, latestWeek, configured: writerConfigured(), model: COMMENTARY_MODEL,
+    generating: !!job && !job.error, generateError: job?.error || null,
+    entry: entry ? {
+      week: entry.week, prevWeek: entry.prevWeek, figures: entry.figures,
+      draft: entry.draft, published: entry.published,
+      status: !entry.published ? 'draft' : entry.published.text === entry.draft?.text ? 'published' : 'edited',
+    } : null,
+  });
+});
+
+app.put('/api/commentary', requireEditor, async (req, res) => {
+  const market = marketParam(req.body?.market);
+  const { week, text } = req.body || {};
+  if (!market || !isWeekStart(week) || typeof text !== 'string' || !text.trim() || text.length > 20000) {
+    return res.status(400).json({ error: 'Invalid request.' });
+  }
+  if (!commentaryStore.get(week, market)) return res.status(404).json({ error: 'No commentary for this week yet.' });
+  await commentaryStore.saveDraft(week, market, { text: text.trim(), source: 'editor' });
+  console.log(`[commentary] ${market} ${week}: draft edited`);
+  res.json({ ok: true });
+});
+
+app.post('/api/commentary/publish', requireEditor, async (req, res) => {
+  const market = marketParam(req.body?.market);
+  const { week } = req.body || {};
+  if (!market || !isWeekStart(week)) return res.status(400).json({ error: 'Invalid request.' });
+  const entry = await commentaryStore.publish(week, market);
+  if (!entry) return res.status(404).json({ error: 'Nothing to publish yet.' });
+  console.log(`[commentary] ${market} ${week}: published`);
+  res.json({ ok: true });
+});
+
+// Starts a (re)draft in the background; the box polls GET until it is ready
+app.post('/api/commentary/generate', requireEditor, (req, res) => {
+  const market = marketParam(req.body?.market);
+  const latest = commentary.latestWeek().startDate;
+  const week = req.body?.week ?? latest;
+  if (!market || !isWeekStart(week) || week > latest) return res.status(400).json({ error: 'Invalid request.' });
+  if (!writerConfigured()) return res.status(503).json({ error: 'Commentary is not set up yet (missing Claude API key).' });
+  const key = `${week}|${market}`;
+  if (generating.get(key) && !generating.get(key).error) return res.status(202).json({ ok: true, generating: true });
+  generateLog = generateLog.filter(t => Date.now() - t < 24 * 3600 * 1000);
+  if (generateLog.length >= GENERATE_PER_DAY) return res.status(429).json({ error: 'Daily limit for new drafts reached. Try again tomorrow.' });
+  generateLog.push(Date.now());
+  generating.set(key, { startedAt: Date.now() });
+  commentary.generateMarket(week, market)
+    .then(r => {
+      if (r.status === 'no_activity') generating.set(key, { error: 'No delivery in this market for that week, so there is nothing to write about.' });
+      else generating.delete(key);
+    })
+    .catch(err => {
+      console.error(`[commentary] generate ${key}: ${err.message}`);
+      generating.set(key, { error: "Claude couldn't write the draft right now. Please try again in a few minutes." });
+    });
+  res.status(202).json({ ok: true, generating: true });
 });
 
 // Unknown API routes: plain 404 (never fall through to the SPA)

@@ -31,10 +31,14 @@ the two can change independently.
   sign-in (20 seconds at most), with messages that change on long waits. It is
   in `index.html` so it shows on the very first paint; a still logo is shown
   when the device asks for reduced motion.
+- **Weekly insights** per market, below the tables on both lenses (see
+  "Weekly commentary" below).
 - **Top ads** per campaign (Meta and TikTok), in the same panel: the 12
   highest-spend ads with a creative preview (image, playable video, and for Meta
   a "view ad as it appears" link and the ad headline), plus spend, impressions,
-  CTR, CPM and ThruPlays / video views (ROAS and orders in Commerce Lens).
+  CTR, CPM and ThruPlays / video views (ROAS and orders in Commerce Lens), and
+  for video ads the **view rate**: 6-second views / impressions on TikTok,
+  3-second views / impressions on Meta (TMR has no 6-second view for Meta).
   Loaded only when the tab is opened: the numbers first (one quick TMR
   request), then the previews in a second request. TikTok's first video lookup
   for an account can take TMR past its 60s limit while later ones take ~10s, so
@@ -51,8 +55,34 @@ footnotes, "not counted" ad lists, sheet status / hidden-row warnings, FOREX
 notes and raw error messages. Errors are shown as friendly messages; details go
 to the Railway logs.
 
+## Weekly commentary
+Every **Monday at 12:00 Singapore time**, the server takes last week (Mon–Sun)
+and the week before for each market, Brand and Commerce, and has Claude
+(`claude-opus-5-5`, server-side refusal fallback on) write the commentary in
+the structure of MajorForm's weekly-commentary template: executive summary,
+then per platform and campaign type the spend and primary metric (CPM, CPLV,
+CPV, ROAS / CPA) week on week with the 12-week average, and 2–3 sentences of
+interpretation. Every number is computed by the server (`backend/commentary/facts.js`);
+Claude only writes the words, and is told to use no other numbers.
+
+- **Review first:** drafts are visible only to MajorForm editors. Sign in with
+  the editor password: the box shows *Generate now / Regenerate*, *Edit* (Markdown
+  with a live preview) and *Publish to client*. The client sees only the
+  published text; edits after publishing stay hidden until published again.
+  `COMMENTARY_AUTO_PUBLISH=true` publishes scheduled drafts straight away.
+- **Missed runs:** if the service was down at 12:00 it catches up on start; a
+  failed run is retried every 30 minutes (up to 5 times).
+- **Storage:** `DATA_DIR/commentary.json` with the last 20 versions per entry.
+  **Attach a Railway volume** and point `DATA_DIR` at its mount path, or
+  commentary is lost on every redeploy.
+- **Data load:** about 25 TMR queries per Monday run (this week, last week and
+  12 weeks for every market), at background priority.
+
 ## Security model
-- **Login**: one shared password (`DASHBOARD_PASSWORD`). Sessions are signed,
+- **Login**: two shared passwords: `DASHBOARD_PASSWORD` for OATSIDE (view only)
+  and `EDITOR_PASSWORD` for MajorForm (also drafts, edits and publishes the
+  weekly commentary). The role is signed into the session cookie and checked on
+  the server for every commentary change. Sessions are signed,
   httpOnly, SameSite=Lax cookies (Secure over HTTPS), valid 7 days by default.
   Changing the password or `SESSION_SECRET` signs everyone out. Sign-in is rate
   limited (5 failures per IP per 15 minutes, plus a global cap).
@@ -77,6 +107,11 @@ to the Railway logs.
    |---|---|---|
    | `TMR_API_KEY` | yes | Server side only, never sent to the browser |
    | `DASHBOARD_PASSWORD` | yes | Shared with OATSIDE; 16+ characters |
+   | `EDITOR_PASSWORD` | for commentary | MajorForm's editor login; must differ from `DASHBOARD_PASSWORD` |
+   | `ANTHROPIC_API_KEY` | for commentary | Claude API key (server side only) |
+   | `DATA_DIR` | for commentary | Mount path of a Railway volume, e.g. `/data` |
+   | `COMMENTARY_AUTO_PUBLISH` | no | `true` publishes Monday drafts without review (default: review first) |
+   | `COMMENTARY_MODEL`, `COMMENTARY_RUN_HOUR_SGT`, `COMMENTARY_ENABLED` | no | Defaults `claude-opus-5-5`, `12`, on |
    | `SESSION_SECRET` | yes | `openssl rand -hex 32` |
    | `APP_ORIGIN` | recommended | Public URL, e.g. `https://oatside.up.railway.app` |
    | `TMR_TEAM_ID` | no | Defaults to the MajorForm team |
@@ -87,7 +122,12 @@ to the Railway logs.
    | `PREVIEW_TIMEOUT_MS` | no | How long one Top ads preview query may take (default 70000, TMR stops at ~60s) |
 
 3. Generate a domain (Settings > Networking), then set `APP_ORIGIN` to it.
-4. Run one instance only (rate limits, cache and the TMR queue are in memory).
+4. Run one instance only (rate limits, cache, the TMR queue and the Monday
+   scheduler are in memory), and keep App Sleeping off so the Monday 12:00 run
+   happens on time.
+5. For the weekly commentary: add a volume (Service → Settings → Volumes, e.g.
+   mounted at `/data`), set `DATA_DIR=/data`, `EDITOR_PASSWORD` and
+   `ANTHROPIC_API_KEY`.
 
 ## Before go-live
 - [ ] **Publish only what the server needs from MajorPace.** The whole sheet is

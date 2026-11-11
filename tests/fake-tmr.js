@@ -6,6 +6,10 @@
 // It also holds data for ANOTHER client (Yoga Movement) so tests can prove the
 // dashboard never asks for it.
 //
+// Also a fake Claude Messages API at /anthropic/v1/messages (for the weekly
+// commentary): it records each request and answers with Markdown built from
+// the facts it was sent. GET /__fake/claude lists the requests.
+//
 // Test hooks: GET /__fake/requests, POST /__fake/reset, POST /__fake/fail
 // ({ status, message, count }) to make the next run-queries fail, POST
 // /__fake/delay ({ ms }) to slow every run-query down.
@@ -183,6 +187,8 @@ function runQuery(body) {
 
 export function startFakeTMR(port = 0) {
   const requests = [];
+  const claudeRequests = [];
+  let claudeDelayMs = 20;
   let failures = [];
   let delayMs = 5;
   let previewDelayMs = 0;
@@ -197,6 +203,34 @@ export function startFakeTMR(port = 0) {
     req.on('data', c => { raw += c; });
     req.on('end', () => {
       if (url.pathname === '/__fake/requests') return send(200, requests);
+      if (url.pathname === '/__fake/claude') return send(200, claudeRequests);
+      if (url.pathname === '/__fake/claude-delay') { claudeDelayMs = Number(JSON.parse(raw || '{}').ms) || 20; return send(200, { ok: true }); }
+      if (url.pathname === '/anthropic/v1/messages' && req.method === 'POST') {
+        const body = JSON.parse(raw || '{}');
+        const key = req.headers['x-api-key'] || String(req.headers.authorization || '').replace(/^Bearer /, '');
+        claudeRequests.push({ headers: { key, 'anthropic-beta': req.headers['anthropic-beta'] }, body });
+        if (key !== 'test-anthropic-key') return send(401, { type: 'error', error: { type: 'authentication_error', message: 'invalid x-api-key' } });
+        const facts = JSON.parse(body.messages[0].content.slice(body.messages[0].content.indexOf('{')));
+        const s0 = facts.sections[0];
+        const c0 = s0.campaigns[0];
+        const text = [
+          '### Executive summary',
+          `- Total brand spend this week: S$${facts.figures.brand.this_week.spend} (${facts.figures.brand.change_pct.spend}% WoW).`,
+          `- ${s0.section}: ${c0.primary_metric} for ${c0.campaign} from the facts.`,
+          '',
+          '### Brand',
+          `#### ${s0.platform}`,
+          `**${c0.type} — ${facts.market}**`,
+          `- **Spend:** ${s0.currency_symbol}${c0.last_week?.spend} → ${s0.currency_symbol}${c0.this_week.spend}`,
+          '',
+          'Fake commentary written from the facts.',
+        ].join('\n');
+        return setTimeout(() => send(200, {
+          id: `msg_fake_${claudeRequests.length}`, type: 'message', role: 'assistant', model: body.model,
+          content: [{ type: 'thinking', thinking: '', signature: 'x' }, { type: 'text', text }],
+          stop_reason: 'end_turn', stop_sequence: null, usage: { input_tokens: 100, output_tokens: 50 },
+        }), claudeDelayMs);
+      }
       if (url.pathname === '/__fake/reset') { requests.length = 0; failures = []; return send(200, { ok: true }); }
       if (url.pathname === '/__fake/preview-timeout') {
         const o = JSON.parse(raw || '{}');
