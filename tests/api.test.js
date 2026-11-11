@@ -208,6 +208,26 @@ test('top ads: numbers load even when previews time out', async () => {
   assert.deepEqual(previews.previews, {});
   assert.equal(previews.available, false);
   assert.match(stack.logs(), /\[ads previews\] tiktok/);
+  // Background retry fails too: reported as unavailable, not retried in a loop
+  await new Promise(r => setTimeout(r, 300));
+  const after = await (await get(`/api/ads/previews?${q}`)).json();
+  assert.equal(after.available, false);
+  assert.equal(after.retrying, false);
+  assert.match(stack.logs(), /background retry failed too/);
+  await stack.setPreviewTimeout(0);
+});
+
+test('top ads: a slow first preview lookup is retried in the background', async () => {
+  await stack.setPreviewTimeout(50, 1); // cold: first lookup times out, then TMR is warm
+  const q = 'dateRange=custom&startDate=2026-10-13&endDate=2026-10-19&platform=tiktok&lens=brand&campaign=SG_TikTok_OATSIDE_Awareness_CPM_Reach_2026_Barista-Series';
+  const first = await (await get(`/api/ads/previews?${q}`)).json();
+  assert.equal(first.available, false);
+  assert.equal(first.retrying, true);
+  await new Promise(r => setTimeout(r, 300));
+  const second = await (await get(`/api/ads/previews?${q}`)).json();
+  assert.equal(second.available, true);
+  assert.equal(Object.keys(second.previews).length, 3);
+  assert.match(stack.logs(), /background retry succeeded/);
   await stack.setPreviewTimeout(0);
 });
 

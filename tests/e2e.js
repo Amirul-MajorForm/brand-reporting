@@ -100,7 +100,23 @@ try {
     await page.screenshot({ path: `${out}/top-ads-${width}.png` });
     await page.keyboard.press('Escape');
 
-    // TikTok Top ads when previews time out: numbers still show
+    // TikTok Top ads: first preview lookup is slow (cold), the retry succeeds.
+    // Server-side behaviour, so once (the 1440 run would find previews cached)
+    if (width === 1280) {
+      await page.evaluate(() => { globalThis.__PREVIEW_POLL_MS__ = 1500; });
+      await stack.setPreviewTimeout(800, 1);
+      await page.getByRole('combobox').selectOption('30');
+      await page.getByText('Barista-Series', { exact: false }).first().waitFor();
+      await page.getByRole('button', { name: 'View daily trend for SG_TikTok_OATSIDE_Awareness_CPM_Reach_2026_Barista-Series' }).click();
+      await page.getByRole('tab', { name: 'Top ads' }).click();
+      await page.getByRole('dialog').getByText(/still loading from TikTok/).waitFor({ timeout: 8000 });
+      check(true, `${width}: slow TikTok previews show a "still loading" note`);
+      await page.waitForFunction(() => [...document.querySelectorAll('[role="dialog"] img')].length === 3, null, { timeout: 15000 });
+      check(true, `${width}: previews fill in after the background retry, without reopening`);
+      await page.keyboard.press('Escape');
+    }
+
+    // TikTok Top ads when previews keep timing out: numbers still show
     await stack.setPreviewTimeout(1200);
     await page.getByRole('combobox').selectOption('14');
     await page.getByText('Barista-Series', { exact: false }).first().waitFor();

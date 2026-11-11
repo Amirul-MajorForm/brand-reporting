@@ -36,9 +36,12 @@ the two can change independently.
   a "view ad as it appears" link and the ad headline), plus spend, impressions,
   CTR, CPM and ThruPlays / video views (ROAS and orders in Commerce Lens).
   Loaded only when the tab is opened: the numbers first (one quick TMR
-  request), then the previews in a second request. If TMR is too slow with the
-  previews (TikTok video lookups can pass its 60s limit), the ads still show
-  with "Preview not available", and that is remembered for 3 minutes.
+  request), then the previews in a second request. TikTok's first video lookup
+  for an account can take TMR past its 60s limit while later ones take ~10s, so
+  a failed preview query is retried once in the background straight away and
+  the panel checks back every 20s (3 times), filling the previews in when they
+  arrive. The numbers show throughout; if the retry fails too, the cards say
+  "Preview not available" and previews are not retried for 5 minutes.
 - Date presets: last 7/14/30/60/90 days, month / quarter to date, this month,
   last month, custom.
 
@@ -81,7 +84,7 @@ to the Railway logs.
    | `COMMERCE_TREND_START` | no | Default `2026-01-01` |
    | `TMR_TIMEOUT_MS`, `SESSION_TTL_HOURS`, `LOGIN_MAX_FAILURES` | no | |
    | `OTHER_CLIENT_NAMES` | no | Comma-separated client names whose campaigns are always hidden (NOBO is shown) |
-   | `PREVIEW_TIMEOUT_MS` | no | How long Top ads waits for creative previews (default 45000) |
+   | `PREVIEW_TIMEOUT_MS` | no | How long one Top ads preview query may take (default 70000, TMR stops at ~60s) |
 
 3. Generate a domain (Settings > Networking), then set `APP_ORIGIN` to it.
 4. Run one instance only (rate limits, cache and the TMR queue are in memory).

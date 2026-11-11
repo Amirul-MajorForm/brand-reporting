@@ -186,6 +186,7 @@ export function startFakeTMR(port = 0) {
   let failures = [];
   let delayMs = 5;
   let previewDelayMs = 0;
+  let previewFailCount = Infinity;
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://x');
     const send = (status, body, type = 'application/json') => {
@@ -197,7 +198,12 @@ export function startFakeTMR(port = 0) {
     req.on('end', () => {
       if (url.pathname === '/__fake/requests') return send(200, requests);
       if (url.pathname === '/__fake/reset') { requests.length = 0; failures = []; return send(200, { ok: true }); }
-      if (url.pathname === '/__fake/preview-timeout') { previewDelayMs = Number(JSON.parse(raw || '{}').ms) || 0; return send(200, { ok: true }); }
+      if (url.pathname === '/__fake/preview-timeout') {
+        const o = JSON.parse(raw || '{}');
+        previewDelayMs = Number(o.ms) || 0;
+        previewFailCount = o.count == null ? Infinity : Number(o.count); // fail this many preview queries, then succeed
+        return send(200, { ok: true });
+      }
       if (url.pathname === '/__fake/delay') { delayMs = Number(JSON.parse(raw || '{}').ms) || 5; return send(200, { ok: true }); }
       if (url.pathname === '/__fake/fail') {
         const { status = 500, message = 'boom', count = 1 } = JSON.parse(raw || '{}');
@@ -221,7 +227,10 @@ export function startFakeTMR(port = 0) {
           return setTimeout(() => send(504, { error: { message: 'Gateway timeout' } }), 30);
         }
         const isPreview = (body.dimensions || []).some(d => /creative|video_cover|video_preview|preview_shareable/.test(d));
-        if (isPreview && previewDelayMs) return setTimeout(() => send(504, { error: { message: 'Gateway timeout' } }), previewDelayMs);
+        if (isPreview && previewDelayMs && previewFailCount > 0) {
+          previewFailCount -= 1;
+          return setTimeout(() => send(504, { error: { message: 'Gateway timeout' } }), previewDelayMs);
+        }
         const fail = failures.shift();
         if (fail) return send(fail.status, { error: { message: fail.message } });
         const out = runQuery(body);

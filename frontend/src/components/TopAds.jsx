@@ -100,6 +100,10 @@ function AdCard({ ad, rank, theme, currency, commerce, platform, previewPending 
   );
 }
 
+const PREVIEW_POLLS = 4;          // first request + 3 follow-ups
+// 20s between checks; read at call time so browser tests can shorten it
+const previewPollMs = () => Number(globalThis.__PREVIEW_POLL_MS__) || 20000;
+
 export default function TopAds({ target, params, theme }) {
   const { campaign, platform, lens, currency } = target;
   const commerce = target.variant === 'commerce';
@@ -115,8 +119,17 @@ export default function TopAds({ target, params, theme }) {
       .then(data => {
         setState({ loading: false, data, error: null });
         if (!data?.ads?.length) return setPreviews({ loading: false, map: {}, available: true });
-        return fetchAdPreviews(params, { campaign, platform, lens }, ctrl.signal)
-          .then(p => setPreviews({ loading: false, map: p.previews || {}, available: p.available !== false }))
+        // The server retries slow previews in the background; ask again every
+        // previewPollMs() (a few times) and fill them in when they are ready
+        const poll = attempt => fetchAdPreviews(params, { campaign, platform, lens }, ctrl.signal)
+          .then(p => {
+            if (p.available === false && p.retrying && attempt < PREVIEW_POLLS) {
+              setPreviews({ loading: true, map: {}, available: true, slow: true });
+              return new Promise(r => setTimeout(r, previewPollMs())).then(() => (ctrl.signal.aborted ? null : poll(attempt + 1)));
+            }
+            return setPreviews({ loading: false, map: p.previews || {}, available: p.available !== false });
+          });
+        return poll(1)
           .catch(e => { if (e.name !== 'AbortError') setPreviews({ loading: false, map: {}, available: false }); });
       })
       .catch(e => { if (e.name !== 'AbortError') setState({ loading: false, data: null, error: e.message }); });
@@ -145,7 +158,9 @@ export default function TopAds({ target, params, theme }) {
       <div style={{ fontSize: 11, color: theme.textMuted, marginTop: 10 }}>
         Ranked by spend{state.data.totalAds > ads.length ? `; top ${ads.length} of ${state.data.totalAds} ads` : ''}. Amounts in {currency}.
         {commerce && state.data.hasRevenue === false ? ' TikTok reports revenue and orders per campaign only, not per ad.' : ''}
-        {previews.loading ? ' Loading previews…' : !previews.available ? ' Previews are taking too long right now; try again in a few minutes.' : ''}
+        {previews.loading
+          ? (previews.slow ? ` Previews are still loading from ${platform === 'tiktok' ? 'TikTok' : 'Meta'}; this can take a minute the first time.` : ' Loading previews…')
+          : !previews.available ? ' Previews are taking too long right now; try again in a few minutes.' : ''}
       </div>
     </div>
   );

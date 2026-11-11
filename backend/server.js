@@ -602,14 +602,63 @@ function adStats(lens, platform, campaign, range, withRev) {
   });
 }
 
-// Creative previews for a campaign's ads, loaded after the numbers. One query
-// over at most the last PREVIEW_MAX_DAYS of the range, no chunking or split
-// retries, and a shorter timeout: if TMR is slow, previews are skipped (and
-// that is remembered for a few minutes) rather than holding up anything else.
+// Creative previews for a campaign's ads, loaded after the numbers.
+//
+// TikTok's first video lookup for an account can take TMR past its 60s limit,
+// while the same query a minute later returns in ~10s (TMR has warmed up). So:
+//   1. one query, the full TMR window (PREVIEW_TIMEOUT_MS), no chunk / split;
+//   2. if it fails, one background retry starts at once (TMR is warm by then);
+//      the browser keeps asking every ~20s and gets the previews when ready;
+//   3. success is cached 15 minutes (the CDN links expire after ~24h at best).
 const PREVIEW_MAX_DAYS = 31;
-const PREVIEW_TIMEOUT_MS = Number(process.env.PREVIEW_TIMEOUT_MS) || 45000;
+const PREVIEW_TIMEOUT_MS = Number(process.env.PREVIEW_TIMEOUT_MS) || 70000;
 const PREVIEW_TTL = 15 * 60 * 1000;
-const PREVIEW_FAILED_TTL = 3 * 60 * 1000;
+const PREVIEW_RETRY_GIVE_UP_MS = 5 * 60 * 1000; // after a failed retry, wait this long before trying again
+
+// key -> { status: 'loading' | 'ready' | 'retrying' | 'failed', previews, ts, promise }
+const previewState = new Map();
+
+function previewQuery(accounts, platform, campaign, window, priority) {
+  return makeQuery(accounts, ['impressions'], window, {
+    dimensions: PREVIEW_DIMENSIONS[platform],
+    filters: [{ fieldId: 'campaign_name', operator: 'equals', value: campaign }],
+    priority, chunk: false, split: false, timeoutMs: PREVIEW_TIMEOUT_MS,
+  }).then(raw => buildPreviews(raw.data, platform));
+}
+
+// Returns { previews, available, retrying } without ever throwing
+async function loadPreviews(key, accounts, platform, campaign, window) {
+  const now = Date.now();
+  let st = previewState.get(key);
+  if (st?.status === 'ready' && now - st.ts < PREVIEW_TTL) return { previews: st.previews, available: true, retrying: false };
+  if (st?.status === 'retrying') return { previews: {}, available: false, retrying: true };
+  if (st?.status === 'failed' && now - st.ts < PREVIEW_RETRY_GIVE_UP_MS) return { previews: {}, available: false, retrying: false };
+  if (st?.status === 'loading') return st.promise;
+
+  const attempt = (async () => {
+    try {
+      const previews = await previewQuery(accounts, platform, campaign, window, PRIORITY.user);
+      previewState.set(key, { status: 'ready', previews, ts: Date.now() });
+      return { previews, available: true, retrying: false };
+    } catch (err) {
+      console.error(`[ads previews] ${platform} ${campaign}: ${err.status || ''} ${err.message}; retrying in the background`);
+      previewState.set(key, { status: 'retrying', ts: Date.now() });
+      previewQuery(accounts, platform, campaign, window, PRIORITY.normal)
+        .then(previews => {
+          console.log(`[ads previews] ${platform} ${campaign}: background retry succeeded`);
+          previewState.set(key, { status: 'ready', previews, ts: Date.now() });
+        })
+        .catch(err2 => {
+          console.error(`[ads previews] ${platform} ${campaign}: background retry failed too: ${err2.status || ''} ${err2.message}`);
+          previewState.set(key, { status: 'failed', ts: Date.now() });
+        });
+      return { previews: {}, available: false, retrying: true };
+    }
+  })();
+  previewState.set(key, { status: 'loading', ts: now, promise: attempt });
+  if (previewState.size > 2000) previewState.delete(previewState.keys().next().value);
+  return attempt;
+}
 
 app.get('/api/ads/previews', async (req, res) => {
   try {
@@ -624,22 +673,10 @@ app.get('/api/ads/previews', async (req, res) => {
     const { accounts } = await adStats(lens, platform, campaign, range, req.query.rev === '1');
     const earliest = isoDay(Date.parse(range.endDate) - (PREVIEW_MAX_DAYS - 1) * DAY);
     const window = { startDate: range.startDate > earliest ? range.startDate : earliest, endDate: range.endDate };
-
-    const result = await cached(`previews_${lens}_${platform}_${campaign}_${window.startDate}_${window.endDate}`, async () => {
-      if (!accounts?.length) return { previews: {}, available: true };
-      try {
-        const raw = await makeQuery(accounts, ['impressions'], window, {
-          dimensions: PREVIEW_DIMENSIONS[platform],
-          filters: [{ fieldId: 'campaign_name', operator: 'equals', value: campaign }],
-          priority: PRIORITY.user, chunk: false, split: false, timeoutMs: PREVIEW_TIMEOUT_MS,
-        });
-        return { previews: buildPreviews(raw.data, platform), available: true, ttl: PREVIEW_TTL };
-      } catch (err) {
-        console.error(`[ads previews] ${platform} ${campaign}: ${err.status || ''} ${err.message}`);
-        return { previews: {}, available: false };
-      }
-    }, PREVIEW_FAILED_TTL);
-    res.json({ campaign, platform, previews: result.previews, available: result.available });
+    const result = accounts?.length
+      ? await loadPreviews(`${lens}_${platform}_${campaign}_${window.startDate}_${window.endDate}`, accounts, platform, campaign, window)
+      : { previews: {}, available: true, retrying: false };
+    res.json({ campaign, platform, ...result });
   } catch (err) {
     sendError(res, 'ads previews', err);
   }
