@@ -251,7 +251,7 @@ export default function TrendPanel({ target, params, goals, theme, darkMode, onC
   return (
     <div
       onClick={onClose}
-      style={{ position: 'fixed', inset: 0, background: 'rgba(20,14,9,0.5)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
+      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
     >
       <div
         role="dialog" aria-modal="true" aria-label={`Trend for ${campaign}`}

@@ -1,23 +1,36 @@
-// OATSIDE branding, all in one place. PLACEHOLDER values: swap in the real
-// logo (public/logo.svg) and brand colours when OATSIDE's assets arrive.
+// OATSIDE branding, all in one place. Colours are taken from oatside.com's own
+// stylesheet; the logo is the official wordmark (frontend/public/logo-*.png).
 // Everything else (theme.js, sidebar, header, login, charts) reads from here.
 
 export const BRAND = {
   client: 'OATSIDE',
   product: 'Performance Dashboard',
   preparedBy: 'Prepared by MajorForm',
-  // Set to '/logo.svg' (put the file in frontend/public) to replace the wordmark
-  logoUrl: null,
+  logo: {
+    onDark: '/logo-white.png',
+    onLight: '/logo-black.png',
+    aspect: 738 / 131, // width / height of the logo files
+  },
   colors: {
-    primary: '#7a4a22',       // warm oat brown: buttons, active states, chart lines
-    primaryDark: '#5c3616',   // hover / gradient end
-    primaryOnDark: '#e2b98c', // primary used on dark backgrounds
-    primarySoft: '#f3e8dc',   // tinted backgrounds (active filters, badges)
-    sidebar: '#2a1f17',       // sidebar background (always dark)
-    sidebarHover: '#3a2b20',
-    sidebarActive: '#4a3627',
-    sidebarBorder: '#3a2b20',
-    sidebarText: '#cdb9a6',
-    sidebarLabel: '#8c7764',
+    // oatside.com palette
+    ink: '#000000',        // text, borders, logo
+    inkSoft: '#1a1818',    // near-black used on the site
+    yellow: '#F7DF53',     // signature button / highlight (black text, black border)
+    blue: '#487CBA',       // primary button
+    red: '#DB5B54',
+    green: '#76A780',
+    orange: '#C97840',
+    pink: '#F0BEC8',
+    grey: '#F2F2F2',       // footer / secondary button background
+    greyText: '#707070',   // footer text
+
+    // Derived for this dashboard
+    blueText: '#35659F',   // blue darkened to pass WCAG AA as small text on white
+    sidebar: '#1a1818',
+    sidebarHover: '#262323',
+    sidebarActive: '#302c2c',
+    sidebarBorder: '#2a2626',
+    sidebarText: '#c4c0bc',
+    sidebarLabel: '#8c8884',
   },
 };

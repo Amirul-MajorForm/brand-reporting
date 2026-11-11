@@ -73,7 +73,7 @@ function GoalCard({ g, theme, darkMode, trendPending }) {
     <div style={{
       background: theme.surface,
       border: `1px solid ${theme.border}`,
-      borderTop: `3px solid ${g.onTrack == null ? theme.borderStrong : g.onTrack ? good : bad}`,
+      borderTop: `3px solid ${g.onTrack == null ? theme.borderStrong : g.onTrack ? theme.goodLine : theme.badLine}`,
       borderRadius: 12,
       padding: '14px 16px',
       display: 'flex',

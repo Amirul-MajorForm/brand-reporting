@@ -10,7 +10,7 @@ const S = {
   text: C.sidebarText,
   textActive: '#ffffff',
   label: C.sidebarLabel,
-  accent: C.primaryOnDark,
+  accent: C.yellow,
 };
 
 // Brand Lens: megaphone (awareness / brand campaigns)
@@ -57,13 +57,11 @@ const TABS = [
   { id: 'commerce', label: 'Commerce Lens', icon: ICON_COMMERCE },
 ];
 
-// Wordmark used until a real logo is set in brand.js
-export function Wordmark({ size = 20, color = '#fff' }) {
-  if (BRAND.logoUrl) return <img src={BRAND.logoUrl} alt={BRAND.client} style={{ height: size * 1.4, display: 'block' }} />;
+// The OATSIDE logo, white on dark backgrounds and black on light ones
+export function Wordmark({ width = 132, onDark = true }) {
   return (
-    <span style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 700, fontSize: size, letterSpacing: '0.08em', color, lineHeight: 1 }}>
-      {BRAND.client}
-    </span>
+    <img src={onDark ? BRAND.logo.onDark : BRAND.logo.onLight} alt={BRAND.client}
+      width={width} height={Math.round(width / BRAND.logo.aspect)} style={{ display: 'block' }} />
   );
 }
 

@@ -105,6 +105,9 @@ try {
 
     // Dark mode then sign out
     await page.getByRole('button', { name: 'Dark mode' }).click();
+    await page.waitForTimeout(500); // let the colour transition finish
+    const headerBg = await page.evaluate(() => getComputedStyle(document.querySelector('header')).backgroundColor);
+    check(headerBg !== 'rgb(255, 255, 255)', `${width}: dark mode header is dark (${headerBg})`);
     await page.screenshot({ path: `${out}/commerce-dark-${width}.png` });
     await page.getByRole('button', { name: 'Light mode' }).click();
     await page.getByRole('button', { name: 'Sign out' }).click();

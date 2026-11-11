@@ -97,8 +97,9 @@ export default function Header({
               fontSize: 12,
               fontWeight: market === m.value ? 700 : 500,
               fontFamily: "'DM Sans', sans-serif",
-              background: market === m.value ? theme.accent : 'transparent',
-              color: market === m.value ? (theme.dark ? theme.bg : '#fff') : theme.textSecondary,
+              background: market === m.value ? theme.highlight : 'transparent',
+              color: market === m.value ? theme.onHighlight : theme.textSecondary,
+              boxShadow: market === m.value ? `inset 0 0 0 1px ${theme.highlightBorder}` : 'none',
               transition: 'all 0.15s',
             }}
           >
@@ -126,8 +127,8 @@ export default function Header({
             onClick={onApplyCustom}
             disabled={!customStart || !customEnd || customStart > customEnd}
             style={{
-              background: theme.accent,
-              color: theme.dark ? theme.bg : '#fff', border: 'none', borderRadius: 8,
+              background: theme.highlight,
+              color: theme.onHighlight, border: `1px solid ${theme.highlightBorder}`, borderRadius: 8,
               padding: '7px 14px', fontSize: 13, fontWeight: 600,
               fontFamily: "'DM Sans', sans-serif",
               cursor: !customStart || !customEnd || customStart > customEnd ? 'not-allowed' : 'pointer',

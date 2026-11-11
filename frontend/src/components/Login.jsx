@@ -28,11 +28,11 @@ export default function Login({ theme, onSuccess }) {
     <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16, background: theme.bg }}>
       <form onSubmit={submit} style={{
         width: 'min(380px, 100%)', background: theme.surface, border: `1px solid ${theme.border}`,
-        borderRadius: 16, padding: '32px 28px', boxShadow: '0 12px 40px rgba(42,31,23,0.08)',
+        borderRadius: 16, padding: '32px 28px', boxShadow: '0 12px 40px rgba(0,0,0,0.06)',
       }}>
-        <div style={{ background: BRAND.colors.sidebar, borderRadius: 12, padding: '18px 20px', marginBottom: 24 }}>
-          <Wordmark size={22} />
-          <div style={{ fontSize: 12, color: BRAND.colors.sidebarText, marginTop: 8 }}>{BRAND.product}</div>
+        <div style={{ marginBottom: 26 }}>
+          <Wordmark width={168} onDark={theme.dark} />
+          <div style={{ fontSize: 13, color: theme.textMuted, marginTop: 10 }}>{BRAND.product}</div>
         </div>
         <label htmlFor="password" style={{ display: 'block', fontSize: 13, fontWeight: 600, color: theme.textPrimary, marginBottom: 6 }}>
           Password
@@ -50,7 +50,7 @@ export default function Login({ theme, onSuccess }) {
         {error && <div id="login-error" role="alert" style={{ fontSize: 13, color: theme.errorText, marginTop: 8 }}>{error}</div>}
         <button type="submit" disabled={busy || !password} style={{
           width: '100%', marginTop: 18, padding: '11px 14px', fontSize: 14, fontWeight: 600, borderRadius: 9,
-          border: 'none', background: theme.accent, color: theme.dark ? theme.bg : '#fff',
+          border: `1px solid ${theme.highlightBorder}`, background: theme.highlight, color: theme.onHighlight,
           cursor: busy || !password ? 'not-allowed' : 'pointer', opacity: busy || !password ? 0.6 : 1,
           fontFamily: "'DM Sans', sans-serif",
         }}>

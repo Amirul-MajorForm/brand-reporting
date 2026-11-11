@@ -73,9 +73,11 @@ to the Railway logs.
 - [ ] **TMR quota is shared** with the internal dashboard if both use the same
       team / key (15 run-query requests per minute). Each service queues its own
       requests, so heavy use of both at once can slow each other down.
-- [ ] Replace the placeholder branding: logo and colours live in
-      `frontend/src/brand.js` (set `logoUrl` and put the file in
-      `frontend/public/`), plus `frontend/public/favicon.svg`.
+- [ ] Branding uses the official OATSIDE logo (`frontend/public/logo-*.png`)
+      and the oatside.com palette (black, `#F7DF53` yellow, `#487CBA` blue,
+      `#F2F2F2` grey, red / green accents), all set in `frontend/src/brand.js`.
+      Confirm with OATSIDE that they're happy with it. Their site's heading
+      font (Recoleta) is a licensed font and is not used here.
 - [ ] Choose a long password and share it with OATSIDE through a private channel.
 
 ## Known limitations

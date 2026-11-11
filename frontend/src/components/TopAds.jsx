@@ -43,7 +43,7 @@ function Preview({ ad, theme }) {
         <button onClick={() => setPlaying(true)} aria-label={`Play ${ad.preview?.title || ad.ad_name}`}
           style={{
             position: 'absolute', inset: 0, margin: 'auto', width: 48, height: 48, borderRadius: '50%', border: 'none',
-            background: 'rgba(20,14,9,0.6)', color: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+            background: 'rgba(0,0,0,0.6)', color: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
           }}>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z" /></svg>
         </button>
