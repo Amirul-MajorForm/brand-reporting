@@ -210,6 +210,10 @@ export function startFakeTMR(port = 0) {
         requests.push({ team: m[1], auth: req.headers.authorization, body });
         if (req.headers.authorization !== 'Bearer test-tmr-key') return send(401, { error: { message: 'Invalid API key' } });
         if (m[1] !== TEAM_ID) return send(404, { error: { message: 'Team not found' } });
+        // Real TMR hangs (504 after 60s) on GMV fields with ad-level fields
+        if ((body.dimensions || []).includes('ad_name') && (body.metrics || []).some(m => /^ttads_gmv_/.test(m))) {
+          return setTimeout(() => send(504, { error: { message: 'Gateway timeout' } }), 30);
+        }
         const isPreview = (body.dimensions || []).some(d => /creative|video_cover|video_preview|preview_shareable/.test(d));
         if (isPreview && previewDelayMs) return setTimeout(() => send(504, { error: { message: 'Gateway timeout' } }), previewDelayMs);
         const fail = failures.shift();

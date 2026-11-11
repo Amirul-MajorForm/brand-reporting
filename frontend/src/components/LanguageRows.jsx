@@ -35,7 +35,8 @@ export default function LanguageRows({ campaign, platform, lens, params, columns
   const best = tagged.filter(l => l.roas != null && (l.spendShare ?? 0) >= 10)
     .reduce((a, b) => (!a || b.roas > a.roas ? b : a), null);
 
-  return langs.map(l => (
+  const noRevenue = state.data && state.data.hasRevenue === false;
+  const rows = langs.map(l => (
     <tr key={l.code} data-testid="language-row">
       {columns.map(col => {
         if (col.grow) {
@@ -61,10 +62,16 @@ export default function LanguageRows({ campaign, platform, lens, params, columns
         return (
           <td key={col.key} style={{ ...cell, textAlign: col.align, color: theme.textSecondary, whiteSpace: 'nowrap', verticalAlign: 'top',
             fontWeight: best === l && col.key === 'roas' ? 700 : 400 }}>
-            {v == null || v === 0 && col.key !== 'orders' ? '—' : fmt(v, col.format, currency, { code })}
+            {v == null || (v === 0 && (col.key !== 'orders' || noRevenue)) ? '—' : fmt(v, col.format, currency, { code })}
           </td>
         );
       })}
     </tr>
   ));
+  if (!noRevenue) return rows;
+  return [...rows, (
+    <tr key="note"><td colSpan={columns.length} style={{ ...cell, color: theme.textMuted, paddingLeft: 42 }}>
+      TikTok reports revenue and orders per campaign only, so this split shows spend and delivery.
+    </td></tr>
+  )];
 }

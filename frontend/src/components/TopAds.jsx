@@ -144,6 +144,7 @@ export default function TopAds({ target, params, theme }) {
       </div>
       <div style={{ fontSize: 11, color: theme.textMuted, marginTop: 10 }}>
         Ranked by spend{state.data.totalAds > ads.length ? `; top ${ads.length} of ${state.data.totalAds} ads` : ''}. Amounts in {currency}.
+        {commerce && state.data.hasRevenue === false ? ' TikTok reports revenue and orders per campaign only, not per ad.' : ''}
         {previews.loading ? ' Loading previews…' : !previews.available ? ' Previews are taking too long right now; try again in a few minutes.' : ''}
       </div>
     </div>

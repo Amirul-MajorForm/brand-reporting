@@ -257,6 +257,19 @@ test('top ads: Google, unlisted and other-client campaigns are refused', async (
   }
 });
 
+test('top ads: TikTok never asks TMR for GMV fields per ad (they hang until a 504)', async () => {
+  for (const lens of ['brand', 'commerce']) {
+    const campaign = lens === 'brand' ? 'SG_TikTok_OATSIDE_Consideration_CPLV_Traffic_2026_Coffee-Launch'
+      : 'SG_PP-All_TikTok_In-Feed_Conversions_Revenue_EN Oct 2026';
+    const res = await get(`/api/ads?dateRange=7&platform=tiktok&lens=brand&rev=1&campaign=${encodeURIComponent(campaign)}`);
+    assert.equal(res.status, 200, campaign);
+    assert.equal((await res.json()).hasRevenue, false);
+  }
+  const adLevel = (await stack.tmrRequests()).filter(r => r.body.dimensions?.includes('ad_name'));
+  assert.ok(adLevel.length > 0);
+  for (const r of adLevel) assert.ok(!r.body.metrics.some(m => /^ttads_gmv_/.test(m)), JSON.stringify(r.body.metrics));
+});
+
 test('safeUrl only passes https links on Meta / TikTok hosts', () => {
   assert.equal(safeUrl('http://p16-common-sign.tiktokcdn.com/a.image'), 'https://p16-common-sign.tiktokcdn.com/a.image');
   assert.ok(safeUrl('https://scontent-fra3-1.xx.fbcdn.net/v/x.jpg?oe=1'));

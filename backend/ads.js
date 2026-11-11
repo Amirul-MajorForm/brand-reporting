@@ -25,10 +25,23 @@ export const PREVIEW_DIMENSIONS = {
   tiktok: ['ad_name', 'ttads_video_cover_url', 'ttads_video_preview_url'],
 };
 
+// TikTok GMV fields (ttads_gmv_*) must never be asked for per ad: TMR does not
+// support GMV fields together with ad-level fields ("Fields from group
+// gmv_campaigns cannot be selected with fields from group ad_dimensions"), and
+// its run-query API does not reject that, it hangs until a 504 after 60s.
+// GMV Max reports at campaign level only, so TikTok ads have no revenue here.
 export const ADS_METRICS = {
   meta: ['amount_spent', 'impressions', 'clicks', 'fads_video_thruplay_watched_actions'],
-  tiktok: ['amount_spent', 'impressions', 'clicks', 'ttads_video_play_actions', 'ttads_gmv_cost'],
+  tiktok: ['amount_spent', 'impressions', 'clicks', 'ttads_video_play_actions'],
 };
+
+// Orders / revenue per ad, by source (Meta only; see above for TikTok)
+export const ADS_REVENUE = {
+  cpas: ['fads_collab_action_omni_purchase', 'fads_collab_ads_value_omni_purchase'],
+  meta: ['fads_all_purchases', 'fads_purchase_conversions_all'],
+};
+
+export const isAdLevelSafe = metric => !/^ttads_gmv_/.test(metric);
 
 // Creative text fields: carried through merges but never summed or used as keys
 export const ADS_TEXT_FIELDS = [...new Set(Object.values(PREVIEW_DIMENSIONS).flat().filter(d => d !== 'ad_name'))];

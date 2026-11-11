@@ -10,7 +10,7 @@ import {
   parsePlatformResult, splitByMarket, getDateRange,
 } from './tmr.js';
 import { securityHeaders, sameOriginOnly } from './security.js';
-import { ADS_PLATFORMS, PREVIEW_DIMENSIONS, ADS_METRICS, ADS_TEXT_FIELDS, buildTopAds, buildPreviews } from './ads.js';
+import { ADS_PLATFORMS, PREVIEW_DIMENSIONS, ADS_METRICS, ADS_REVENUE, ADS_TEXT_FIELDS, isAdLevelSafe, buildTopAds, buildPreviews } from './ads.js';
 import { comparisonRange, buildComparison } from './compare.js';
 import {
   requireAuth, isAuthenticated, checkPassword, setSessionCookie, clearSessionCookie,
@@ -582,14 +582,17 @@ app.get('/api/ads', async (req, res) => {
 
 function adStats(lens, platform, campaign, range, withRev) {
   const revKey = lens === 'commerce' && platform === 'meta' ? 'cpas' : platform;
-  const metrics = [...ADS_METRICS[platform], ...(withRev ? TREND_REVENUE[revKey] : [])];
+  const revenue = withRev ? (ADS_REVENUE[revKey] || []) : [];
+  const metrics = [...ADS_METRICS[platform], ...revenue].filter(isAdLevelSafe);
   return cached(`ads_${lens}_${platform}${withRev ? '_rev' : ''}_${campaign}_${range.startDate}_${range.endDate}`, async () => {
     const raw = await queryCampaign(lens, platform, campaign, metrics, range, {
       dimensions: ['ad_name'],
       filters: [{ fieldId: 'campaign_name', operator: 'equals', value: campaign }],
       priority: PRIORITY.user,
+      // A 504 here is not about the range length: don't spend minutes retrying halves
+      split: false,
     });
-    return { campaign, platform, lens, dateRange: range, hasRevenue: withRev, accounts: raw.accounts, ...buildTopAds(raw.data, platform, { campaign }) };
+    return { campaign, platform, lens, dateRange: range, hasRevenue: revenue.length > 0, accounts: raw.accounts, ...buildTopAds(raw.data, platform, { campaign }) };
   });
 }
 
