@@ -47,6 +47,7 @@ export async function startStack(extraEnv = {}) {
   return {
     base, fakeBase, logs: () => logs,
     tmrRequests: async () => (await fetch(`${fakeBase}/__fake/requests`)).json(),
+    setPreviewTimeout: ms => fetch(`${fakeBase}/__fake/preview-timeout`, { method: 'POST', body: JSON.stringify({ ms }) }),
     setDelay: ms => fetch(`${fakeBase}/__fake/delay`, { method: 'POST', body: JSON.stringify({ ms }) }),
     failNext: (status, message, count = 1) => fetch(`${fakeBase}/__fake/fail`, { method: 'POST', body: JSON.stringify({ status, message, count }) }),
     stop: async () => { child.kill(); await new Promise(r => fake.server.close(r)); },

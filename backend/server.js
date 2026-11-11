@@ -10,7 +10,7 @@ import {
   parsePlatformResult, splitByMarket, getDateRange,
 } from './tmr.js';
 import { securityHeaders, sameOriginOnly } from './security.js';
-import { ADS_PLATFORMS, ADS_DIMENSIONS, ADS_METRICS, ADS_TEXT_FIELDS, buildTopAds } from './ads.js';
+import { ADS_PLATFORMS, PREVIEW_DIMENSIONS, ADS_METRICS, ADS_TEXT_FIELDS, buildTopAds, buildPreviews } from './ads.js';
 import { comparisonRange, buildComparison } from './compare.js';
 import {
   requireAuth, isAuthenticated, checkPassword, setSessionCookie, clearSessionCookie,
@@ -44,7 +44,8 @@ async function cached(key, fetchFn, ttl = CACHE_TTL) {
   dashCache.set(key, { ts: Date.now(), promise, data: null });
   try {
     const data = await promise;
-    dashCache.set(key, { ts: Date.now(), data, promise: null, ttl });
+    // A result may carry its own lifetime (e.g. previews: longer when they loaded)
+    dashCache.set(key, { ts: Date.now(), data, promise: null, ttl: data?.ttl ?? ttl });
     return data;
   } catch (err) {
     dashCache.delete(key);
@@ -74,7 +75,7 @@ function resolveDateRange(query) {
 }
 
 // opts.dimensions defaults to per-campaign rows; opts.filters narrows the query
-const queryOnce = (accounts, metrics, dateRange, { dimensions = ['campaign_name'], filters, priority } = {}) => queryTMR(TMR_API_KEY, TEAM_ID, {
+const queryOnce = (accounts, metrics, dateRange, { dimensions = ['campaign_name'], filters, priority, timeoutMs } = {}) => queryTMR(TMR_API_KEY, TEAM_ID, {
   accounts,
   dimensions,
   metrics,
@@ -83,7 +84,7 @@ const queryOnce = (accounts, metrics, dateRange, { dimensions = ['campaign_name'
   sort: dimensions.includes('date')
     ? [{ fieldId: 'date', direction: 'asc' }]
     : [{ fieldId: 'amount_spent', direction: 'desc' }],
-}, { priority });
+}, { priority, timeoutMs });
 
 const isoDay = t => new Date(t).toISOString().slice(0, 10);
 
@@ -494,15 +495,18 @@ function campaignAccounts(lens, platform, campaign) {
 
 const hasDelivery = r => (r?.data || []).some(row => parseFloat(row.amount_spent) > 0 || parseFloat(row.ttads_gmv_cost) > 0 || parseFloat(row.impressions) > 0);
 
+// Returns the rows plus the accounts they came from (reused by follow-up queries)
 async function queryCampaign(lens, platform, campaign, metrics, range, opts) {
   const { own, others } = campaignAccounts(lens, platform, campaign);
+  let accounts = own;
   let raw = own.length ? await makeQuery(own, metrics, range, opts) : null;
   // Not in the expected account (e.g. an ID_ campaign run from the SG account): search the rest
   if (!hasDelivery(raw) && others.length) {
     console.log(`[campaign] ${campaign} not found in ${own.join(',') || 'no matching account'}; searching ${others.length} other accounts`);
+    accounts = others;
     raw = await makeQuery(others, metrics, range, opts);
   }
-  return raw;
+  return Object.assign(raw || { data: [] }, { accounts });
 }
 
 app.get('/api/trend', async (req, res) => {
@@ -568,21 +572,67 @@ app.get('/api/ads', async (req, res) => {
     if (!(await isListedCampaign(lens, platform, campaign, range))) {
       return res.status(404).json({ error: 'No data for this campaign in this period.' });
     }
-    const withRev = req.query.rev === '1';
-    const revKey = lens === 'commerce' && platform === 'meta' ? 'cpas' : platform;
-    const metrics = [...ADS_METRICS[platform], ...(withRev ? TREND_REVENUE[revKey] : [])];
-
-    const result = await cached(`ads_${lens}_${platform}${withRev ? '_rev' : ''}_${campaign}_${range.startDate}_${range.endDate}`, async () => {
-      const raw = await queryCampaign(lens, platform, campaign, metrics, range, {
-        dimensions: ADS_DIMENSIONS[platform],
-        filters: [{ fieldId: 'campaign_name', operator: 'equals', value: campaign }],
-        priority: PRIORITY.user,
-      });
-      return { campaign, platform, lens, dateRange: range, hasRevenue: withRev, ...buildTopAds(raw?.data, platform, { campaign }) };
-    });
-    res.json(result);
+    const result = await adStats(lens, platform, campaign, range, req.query.rev === '1');
+    const { accounts, ...body } = result;
+    res.json(body);
   } catch (err) {
     sendError(res, 'ads', err);
+  }
+});
+
+function adStats(lens, platform, campaign, range, withRev) {
+  const revKey = lens === 'commerce' && platform === 'meta' ? 'cpas' : platform;
+  const metrics = [...ADS_METRICS[platform], ...(withRev ? TREND_REVENUE[revKey] : [])];
+  return cached(`ads_${lens}_${platform}${withRev ? '_rev' : ''}_${campaign}_${range.startDate}_${range.endDate}`, async () => {
+    const raw = await queryCampaign(lens, platform, campaign, metrics, range, {
+      dimensions: ['ad_name'],
+      filters: [{ fieldId: 'campaign_name', operator: 'equals', value: campaign }],
+      priority: PRIORITY.user,
+    });
+    return { campaign, platform, lens, dateRange: range, hasRevenue: withRev, accounts: raw.accounts, ...buildTopAds(raw.data, platform, { campaign }) };
+  });
+}
+
+// Creative previews for a campaign's ads, loaded after the numbers. One query
+// over at most the last PREVIEW_MAX_DAYS of the range, no chunking or split
+// retries, and a shorter timeout: if TMR is slow, previews are skipped (and
+// that is remembered for a few minutes) rather than holding up anything else.
+const PREVIEW_MAX_DAYS = 31;
+const PREVIEW_TIMEOUT_MS = Number(process.env.PREVIEW_TIMEOUT_MS) || 45000;
+const PREVIEW_TTL = 15 * 60 * 1000;
+const PREVIEW_FAILED_TTL = 3 * 60 * 1000;
+
+app.get('/api/ads/previews', async (req, res) => {
+  try {
+    if (!requireKey(res)) return;
+    const params = campaignParams(req.query, ADS_PLATFORMS);
+    if (!params) return res.status(400).json({ error: 'Invalid request.' });
+    const { platform, campaign, lens } = params;
+    const range = resolveDateRange(req.query);
+    if (!(await isListedCampaign(lens, platform, campaign, range))) {
+      return res.status(404).json({ error: 'No data for this campaign in this period.' });
+    }
+    const { accounts } = await adStats(lens, platform, campaign, range, req.query.rev === '1');
+    const earliest = isoDay(Date.parse(range.endDate) - (PREVIEW_MAX_DAYS - 1) * DAY);
+    const window = { startDate: range.startDate > earliest ? range.startDate : earliest, endDate: range.endDate };
+
+    const result = await cached(`previews_${lens}_${platform}_${campaign}_${window.startDate}_${window.endDate}`, async () => {
+      if (!accounts?.length) return { previews: {}, available: true };
+      try {
+        const raw = await makeQuery(accounts, ['impressions'], window, {
+          dimensions: PREVIEW_DIMENSIONS[platform],
+          filters: [{ fieldId: 'campaign_name', operator: 'equals', value: campaign }],
+          priority: PRIORITY.user, chunk: false, split: false, timeoutMs: PREVIEW_TIMEOUT_MS,
+        });
+        return { previews: buildPreviews(raw.data, platform), available: true, ttl: PREVIEW_TTL };
+      } catch (err) {
+        console.error(`[ads previews] ${platform} ${campaign}: ${err.status || ''} ${err.message}`);
+        return { previews: {}, available: false };
+      }
+    }, PREVIEW_FAILED_TTL);
+    res.json({ campaign, platform, previews: result.previews, available: result.available });
+  } catch (err) {
+    sendError(res, 'ads previews', err);
   }
 });
 

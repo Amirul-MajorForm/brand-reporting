@@ -54,6 +54,10 @@ export const fetchAds = (params, { campaign, platform, lens, rev = false }, sign
 // Commerce Lens header chart: monthly totals since the start of the year
 export const fetchCommerceMonthly = signal => request('/api/commerce/monthly', { signal });
 
+// Creative previews for those ads (slower; loaded after the numbers)
+export const fetchAdPreviews = (params, { campaign, platform, lens }, signal) =>
+  request(withRange('/api/ads/previews', params, { campaign, platform, lens }), { signal });
+
 // Commerce Lens "vs previous month": same tables for the same dates a month earlier
 export const fetchCommerceCompare = (params, signal) => request(withRange('/api/commerce/compare', params), { signal });
 

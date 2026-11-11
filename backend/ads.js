@@ -1,19 +1,25 @@
 // Top ads (per campaign): ad-level results plus a creative preview from TMR.
 //
+// Two separate TMR queries, so slow creative lookups never block the numbers:
+//   stats:    ad_name + metrics (fast, like the daily trend). Feeds Top ads and
+//             the Commerce Lens language split.
+//   previews: ad_name + creative fields. TikTok looks up each ad's video, which
+//             can take TMR past its 60s limit; if so the cards keep their
+//             numbers and show "Preview not available".
+//
 // Meta:   thumbnail / image, MP4 video, a shareable preview link (fb.me) and
 //         the ad's headline.
 // TikTok: video cover image and a playable MP4.
 // Google: not supported (search ads are text only).
 //
 // The image / video links are signed CDN URLs that expire (Meta after a few
-// days, TikTok after about 24 hours), so they are only cached as long as the
-// rest of the data (5 minutes) and never stored.
+// days, TikTok after about 24 hours), so they are cached briefly and never stored.
 
 import { normalizeRow } from './tmr.js';
 
 export const ADS_PLATFORMS = ['meta', 'tiktok'];
 
-export const ADS_DIMENSIONS = {
+export const PREVIEW_DIMENSIONS = {
   meta: ['ad_name', 'fads_ad_creative_thumbnail_url', 'fads_ad_creative_image_url', 'fads_ad_creative_video_url',
          'fads_ad_preview_shareable_link', 'fads_ad_creative_title'],
   tiktok: ['ad_name', 'ttads_video_cover_url', 'ttads_video_preview_url'],
@@ -25,7 +31,7 @@ export const ADS_METRICS = {
 };
 
 // Creative text fields: carried through merges but never summed or used as keys
-export const ADS_TEXT_FIELDS = [...new Set(Object.values(ADS_DIMENSIONS).flat().filter(d => d !== 'ad_name'))];
+export const ADS_TEXT_FIELDS = [...new Set(Object.values(PREVIEW_DIMENSIONS).flat().filter(d => d !== 'ad_name'))];
 
 // Only links to the platforms' own CDNs / preview hosts are passed to the
 // browser (the page's Content-Security-Policy allows exactly these for images
@@ -61,8 +67,6 @@ export function languageOf(...names) {
 
 const text = (v, max = 160) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : null);
 
-// Rows come back once per ad and creative (a dynamic-creative ad can have
-// several); merge them per ad name, keeping the first creative with a picture.
 // Totals per language across ALL ads of the campaign (not just the top ones)
 function languageSummary(ads, campaign) {
   const by = new Map();
@@ -86,6 +90,7 @@ function languageSummary(ads, campaign) {
     .sort((a, b) => (a.code === 'OTHER') - (b.code === 'OTHER') || b.spend - a.spend);
 }
 
+// Ad-level numbers, ranked by spend, plus the per-language summary
 export function buildTopAds(rows, platform, { limit = 12, campaign = '' } = {}) {
   const byAd = new Map();
   for (const raw of rows || []) {
@@ -95,7 +100,6 @@ export function buildTopAds(rows, platform, { limit = 12, campaign = '' } = {}) 
     const spend = parseFloat(r.spend) || 0;
     const ad = byAd.get(name) || {
       ad_name: name, spend: 0, impressions: 0, clicks: 0, video_views: 0, thruplays: 0, orders: 0, revenue: 0,
-      preview: null,
     };
     ad.spend += spend;
     ad.impressions += parseFloat(r.impressions) || 0;
@@ -104,17 +108,6 @@ export function buildTopAds(rows, platform, { limit = 12, campaign = '' } = {}) 
     ad.thruplays += parseFloat(r.video_thruplay_watched_actions) || 0;
     ad.orders += r.orders || 0;
     ad.revenue += r.revenue || 0;
-
-    const preview = platform === 'meta'
-      ? {
-          image: safeUrl(r.ad_creative_thumbnail_url) || safeUrl(r.ad_creative_image_url),
-          video: safeUrl(r.ad_creative_video_url),
-          link: safeUrl(r.ad_preview_shareable_link),
-          title: text(r.ad_creative_title),
-        }
-      : { image: safeUrl(r.video_cover_url), video: safeUrl(r.video_preview_url), link: null, title: null };
-    if (!ad.preview?.image && (preview.image || preview.video || preview.link)) ad.preview = preview;
-    else if (ad.preview && !ad.preview.title && preview.title) ad.preview.title = preview.title;
     byAd.set(name, ad);
   }
 
@@ -132,4 +125,27 @@ export function buildTopAds(rows, platform, { limit = 12, campaign = '' } = {}) 
     .sort((a, b) => b.spend - a.spend || b.impressions - a.impressions);
 
   return { ads: ads.slice(0, limit), totalAds: ads.length, languages: languageSummary(ads, campaign) };
+}
+
+// Creative preview per ad name. Rows come back once per ad and creative (a
+// dynamic-creative ad can have several); keep the first one with a picture.
+export function buildPreviews(rows, platform) {
+  const previews = {};
+  for (const raw of rows || []) {
+    const r = normalizeRow(raw);
+    const name = text(r.ad_name, 300);
+    if (!name) continue;
+    const p = platform === 'meta'
+      ? {
+          image: safeUrl(r.ad_creative_thumbnail_url) || safeUrl(r.ad_creative_image_url),
+          video: safeUrl(r.ad_creative_video_url),
+          link: safeUrl(r.ad_preview_shareable_link),
+          title: text(r.ad_creative_title),
+        }
+      : { image: safeUrl(r.video_cover_url), video: safeUrl(r.video_preview_url), link: null, title: null };
+    const prev = previews[name];
+    if (!prev?.image && (p.image || p.video || p.link || p.title)) previews[name] = { ...p, title: p.title || prev?.title || null };
+    else if (prev && !prev.title && p.title) prev.title = p.title;
+  }
+  return previews;
 }

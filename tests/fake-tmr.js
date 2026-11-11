@@ -32,10 +32,12 @@ const DATA = {
     C('PH_TikTok_OATSIDE_Awareness_CPM_Reach_2026_Barista-Series', { amount_spent: 45.5, impressions: 70100, clicks: 210, ttads_video_play_actions: 25000, ttads_reach: 33000 }),
   ] },
   ttads_7539818342035931137: { advertiser: '7539818342035931137', campaigns: [] },
-  // ID TikTok is a shared regional account: it also runs another client's campaign
+  // ID TikTok is a shared regional account: NOBO (shown in this dashboard) and
+  // another client's campaign (must be hidden)
   ttads_7558728389196365825: { advertiser: '7558728389196365825', campaigns: [
     C('ID_TikTok_OATSIDE_Awareness_CPM_Reach_2026_Coffee-Phase1', { amount_spent: 40.1, impressions: 90000, clicks: 300, ttads_video_play_actions: 30000 }),
-    C('ID_All_TikTok_In-feed_Awareness_Reach_Nobo Kids Oct 2026 BI', { amount_spent: 333.33, impressions: 333333, clicks: 3333, ttads_video_play_actions: 33333 }),
+    C('ID_All_TikTok_In-feed_Awareness_Reach_Nobo Kids Oct 2026 BI', { amount_spent: 52.4, impressions: 160000, clicks: 520, ttads_video_play_actions: 61000 }),
+    C('ID_TikTok_BlueSG_Awareness_CPM_Reach_2026_Rides', { amount_spent: 333.33, impressions: 333333, clicks: 3333, ttads_video_play_actions: 33333 }),
   ] },
   ttads_7601715326036017169: { advertiser: '7601715326036017169', campaigns: [] },
   // ---------------- Meta brand (local currency)
@@ -177,6 +179,7 @@ export function startFakeTMR(port = 0) {
   const requests = [];
   let failures = [];
   let delayMs = 5;
+  let previewDelayMs = 0;
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://x');
     const send = (status, body, type = 'application/json') => {
@@ -188,6 +191,7 @@ export function startFakeTMR(port = 0) {
     req.on('end', () => {
       if (url.pathname === '/__fake/requests') return send(200, requests);
       if (url.pathname === '/__fake/reset') { requests.length = 0; failures = []; return send(200, { ok: true }); }
+      if (url.pathname === '/__fake/preview-timeout') { previewDelayMs = Number(JSON.parse(raw || '{}').ms) || 0; return send(200, { ok: true }); }
       if (url.pathname === '/__fake/delay') { delayMs = Number(JSON.parse(raw || '{}').ms) || 5; return send(200, { ok: true }); }
       if (url.pathname === '/__fake/fail') {
         const { status = 500, message = 'boom', count = 1 } = JSON.parse(raw || '{}');
@@ -206,6 +210,8 @@ export function startFakeTMR(port = 0) {
         requests.push({ team: m[1], auth: req.headers.authorization, body });
         if (req.headers.authorization !== 'Bearer test-tmr-key') return send(401, { error: { message: 'Invalid API key' } });
         if (m[1] !== TEAM_ID) return send(404, { error: { message: 'Team not found' } });
+        const isPreview = (body.dimensions || []).some(d => /creative|video_cover|video_preview|preview_shareable/.test(d));
+        if (isPreview && previewDelayMs) return setTimeout(() => send(504, { error: { message: 'Gateway timeout' } }), previewDelayMs);
         const fail = failures.shift();
         if (fail) return send(fail.status, { error: { message: fail.message } });
         const out = runQuery(body);

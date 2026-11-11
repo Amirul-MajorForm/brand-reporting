@@ -16,6 +16,7 @@ const DATA_ENDPOINTS = [
   '/api/ads?dateRange=7&platform=meta&lens=brand&campaign=SG_Meta_OATSIDE_Awareness_CPM_Reach_2026_Barista-Series',
   '/api/ads?dateRange=7&platform=tiktok&lens=brand&campaign=SG_TikTok_OATSIDE_Awareness_CPM_Reach_2026_Barista-Series',
   '/api/commerce/compare?dateRange=7',
+  '/api/ads/previews?dateRange=7&platform=meta&lens=brand&campaign=SG_Meta_OATSIDE_Awareness_CPM_Reach_2026_Barista-Series',
 ];
 const get = (path, headers = {}) => fetch(`${stack.base}${path}`, { headers: { Cookie: cookie, ...headers } });
 
@@ -183,15 +184,31 @@ test('language split: MY CPAS campaign by EN / BM from ad names', async () => {
   assert.ok(Math.abs(body.languages.reduce((s, l) => s + l.spendShare, 0) - 100) < 0.01);
 });
 
-test('other clients\' campaigns in shared OATSIDE accounts are dropped everywhere', async () => {
-  const dash = await (await get('/api/dashboard?dateRange=7')).text();
-  assert.ok(!/nobo/i.test(dash));
-  assert.ok(/ID_TikTok_OATSIDE/.test(dash), 'OATSIDE campaigns in the same account are kept');
-  const monthly = await (await get('/api/commerce/monthly')).text();
-  assert.ok(!/nobo/i.test(monthly));
-  const trend = await get(`/api/trend?dateRange=7&platform=tiktok&lens=brand&campaign=${encodeURIComponent('ID_All_TikTok_In-feed_Awareness_Reach_Nobo Kids Oct 2026 BI')}`);
-  assert.equal(trend.status, 404);
+test('NOBO campaigns in OATSIDE accounts are shown; other clients are dropped', async () => {
+  const dash = await (await get('/api/dashboard?dateRange=7')).json();
+  const idTikTok = dash.markets.id.tiktok.campaigns.map(c => c.campaign_name);
+  assert.ok(idTikTok.includes('ID_All_TikTok_In-feed_Awareness_Reach_Nobo Kids Oct 2026 BI'), 'NOBO shown');
+  assert.ok(idTikTok.includes('ID_TikTok_OATSIDE_Awareness_CPM_Reach_2026_Coffee-Phase1'));
+  assert.ok(!JSON.stringify(dash).includes('BlueSG'), 'other client hidden');
+  const nobo = await get(`/api/trend?dateRange=7&platform=tiktok&lens=brand&campaign=${encodeURIComponent('ID_All_TikTok_In-feed_Awareness_Reach_Nobo Kids Oct 2026 BI')}`);
+  assert.equal(nobo.status, 200);
+  const other = await get(`/api/trend?dateRange=7&platform=tiktok&lens=brand&campaign=${encodeURIComponent('ID_TikTok_BlueSG_Awareness_CPM_Reach_2026_Rides')}`);
+  assert.equal(other.status, 404);
   assert.match(stack.logs(), /dropped \d+ row\(s\) from other clients' campaigns/);
+});
+
+test('top ads: numbers load even when previews time out', async () => {
+  await stack.setPreviewTimeout(50);
+  const q = 'dateRange=custom&startDate=2026-10-20&endDate=2026-10-26&platform=tiktok&lens=brand&campaign=SG_TikTok_OATSIDE_Awareness_CPM_Reach_2026_Barista-Series';
+  const stats = await (await get(`/api/ads?${q}`)).json();
+  assert.equal(stats.ads.length, 3);
+  assert.ok(stats.ads.every(a => a.spend > 0 && !('preview' in a)));
+  assert.ok(!('accounts' in stats), 'internal account ids are not sent');
+  const previews = await (await get(`/api/ads/previews?${q}`)).json();
+  assert.deepEqual(previews.previews, {});
+  assert.equal(previews.available, false);
+  assert.match(stack.logs(), /\[ads previews\] tiktok/);
+  await stack.setPreviewTimeout(0);
 });
 
 // ---------------------------------------------------------------- top ads
@@ -199,26 +216,30 @@ test('top ads: Meta ads ranked by spend with CDN previews only', async () => {
   const body = await (await get(DATA_ENDPOINTS[6])).json();
   assert.equal(body.ads.length, 3);
   assert.ok(body.ads[0].spend >= body.ads[1].spend);
-  const top = body.ads[0];
-  assert.match(top.preview.image, /^https:\/\/[^/]+\.fbcdn\.net\//);
-  assert.match(top.preview.video, /\.mp4/);
-  assert.match(top.preview.link, /^https:\/\/fb\.me\//);
-  assert.equal(top.preview.title, 'Lock In with OATSIDE Espresso Roast');
-  assert.ok(top.ctr > 0 && top.cpm > 0 && top.thruplays > 0);
+  assert.ok(body.ads[0].ctr > 0 && body.ads[0].cpm > 0 && body.ads[0].thruplays > 0);
+  const { previews, available } = await (await get(DATA_ENDPOINTS[6].replace('/api/ads?', '/api/ads/previews?'))).json();
+  assert.equal(available, true);
+  const top = previews[body.ads[0].ad_name];
+  assert.match(top.image, /^https:\/\/[^/]+\.fbcdn\.net\//);
+  assert.match(top.video, /\.mp4/);
+  assert.match(top.link, /^https:\/\/fb\.me\//);
+  assert.equal(top.title, 'Lock In with OATSIDE Espresso Roast');
   // The ad whose creative points elsewhere keeps its numbers but loses every link
   const odd = body.ads.find(a => /Evil-Host/.test(a.ad_name));
   assert.ok(odd && odd.spend > 0);
-  assert.ok(!odd.preview || (!odd.preview.image && !odd.preview.link && !odd.preview.video));
-  assert.ok(!JSON.stringify(body).includes('evil.example'));
-  assert.ok(!JSON.stringify(body).includes('javascript:'));
+  const oddPreview = previews[odd.ad_name];
+  assert.ok(!oddPreview?.image && !oddPreview?.link && !oddPreview?.video);
+  assert.ok(!JSON.stringify(previews).includes('evil.example'));
+  assert.ok(!JSON.stringify(previews).includes('javascript:'));
 });
 
 test('top ads: TikTok covers are upgraded to https and videos are playable links', async () => {
   const body = await (await get(DATA_ENDPOINTS[7])).json();
   assert.equal(body.ads.length, 3);
+  const { previews } = await (await get(DATA_ENDPOINTS[7].replace('/api/ads?', '/api/ads/previews?'))).json();
   for (const ad of body.ads) {
-    assert.match(ad.preview.image, /^https:\/\/p16-common-sign\.tiktokcdn\.com\//);
-    assert.match(ad.preview.video, /^https:\/\/v16-tt4b\.tiktokcdn\.com\//);
+    assert.match(previews[ad.ad_name].image, /^https:\/\/p16-common-sign\.tiktokcdn\.com\//);
+    assert.match(previews[ad.ad_name].video, /^https:\/\/v16-tt4b\.tiktokcdn\.com\//);
     assert.ok(ad.video_views > 0);
   }
 });
@@ -283,7 +304,7 @@ test('no request to TMR ever leaves the OATSIDE team and accounts', async () => 
 
 test('no response ever contains another client\'s data', async () => {
   const bodies = await Promise.all(DATA_ENDPOINTS.map(async p => (await get(p)).text()));
-  for (const b of bodies) assert.ok(!/yoga|blackmores|nobo|999\.99|777\.77|333\.33/i.test(b));
+  for (const b of bodies) assert.ok(!/yoga|blackmores|bluesg|999\.99|777\.77|333\.33/i.test(b));
 });
 
 test('allowlist rejects non-OATSIDE accounts at the query layer', async () => {

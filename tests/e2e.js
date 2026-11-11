@@ -100,6 +100,25 @@ try {
     await page.screenshot({ path: `${out}/top-ads-${width}.png` });
     await page.keyboard.press('Escape');
 
+    // TikTok Top ads when previews time out: numbers still show
+    await stack.setPreviewTimeout(1200);
+    await page.getByRole('combobox').selectOption('14');
+    await page.getByText('Barista-Series', { exact: false }).first().waitFor();
+    await page.getByRole('button', { name: 'View daily trend for SG_TikTok_OATSIDE_Awareness_CPM_Reach_2026_Barista-Series' }).click();
+    await page.getByRole('tab', { name: 'Top ads' }).click();
+    await page.getByRole('dialog').getByText('#1').waitFor();
+    // First time: "Loading previews…" while the numbers are already shown; later
+    // runs get the remembered timeout straight away
+    check(await page.getByRole('dialog').getByText(/Loading previews|Previews are taking too long/).count() === 1, `${width}: ad numbers show without waiting for previews`);
+    await page.getByRole('dialog').getByText(/Previews are taking too long/).waitFor({ timeout: 10000 });
+    const cardsSlow = await page.getByRole('dialog').getByText(/^#\d$/).count();
+    check(cardsSlow === 3, `${width}: TikTok ads still listed when previews time out (${cardsSlow})`);
+    await page.screenshot({ path: `${out}/top-ads-slow-${width}.png` });
+    await page.keyboard.press('Escape');
+    await stack.setPreviewTimeout(0);
+    await page.getByRole('combobox').selectOption('7');
+    await page.getByText('Barista-Series', { exact: false }).first().waitFor();
+
     // Market switch
     await page.getByRole('button', { name: 'MY', exact: true }).click();
     await page.getByText('OATSIDE MY').first().waitFor();

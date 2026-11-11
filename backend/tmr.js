@@ -120,12 +120,13 @@ export function accountOfRow(row) {
   return null;
 }
 
-// Some OATSIDE ad accounts are shared regional accounts that also run other
-// clients' campaigns (seen: a "Nobo Kids" campaign in the ID TikTok account).
-// Any campaign whose name mentions another client is dropped from every query
-// result. OTHER_CLIENT_NAMES (comma-separated) overrides the default list; names
-// match as whole words, ignoring case and spaces / dashes / underscores.
-const OTHER_CLIENT_NAMES = (process.env.OTHER_CLIENT_NAMES || 'NOBO,Yoga Movement,Blackmores,BlueSG')
+// Some OATSIDE ad accounts are shared regional accounts. Any campaign whose
+// name mentions another client is dropped from every query result.
+// NOBO campaigns (e.g. "Nobo Kids" in the ID TikTok account) are deliberately
+// NOT on this list: they belong in the OATSIDE dashboard.
+// OTHER_CLIENT_NAMES (comma-separated) overrides the default list; names match
+// as whole words, ignoring case and spaces / dashes / underscores.
+const OTHER_CLIENT_NAMES = (process.env.OTHER_CLIENT_NAMES || 'Yoga Movement,Blackmores,BlueSG')
   .split(',').map(s => s.trim()).filter(Boolean);
 const OTHER_CLIENT_RE = OTHER_CLIENT_NAMES.length
   ? new RegExp(`(^|[^a-z0-9])(${OTHER_CLIENT_NAMES.map(n => n.toLowerCase().replace(/[^a-z0-9]+/g, '[\\s_-]*')).join('|')})($|[^a-z0-9])`, 'i')
@@ -172,14 +173,14 @@ let busy = false;
 let lastStart = 0;
 const recentStarts = [];
 
-export function queryTMR(apiKey, teamId, body, { priority = PRIORITY.normal } = {}) {
+export function queryTMR(apiKey, teamId, body, { priority = PRIORITY.normal, timeoutMs } = {}) {
   const bad = (body?.accounts || []).filter(a => !ALLOWED_ACCOUNTS.has(a));
   if (teamId !== TEAM_ID || !body?.accounts?.length || bad.length) {
     console.error(`[TMR] refused query outside the OATSIDE allowlist: team ${teamId}, accounts ${bad.join(',') || '(none)'}`);
     return Promise.reject(Object.assign(new Error('Query refused: account not allowed'), { status: 403 }));
   }
   return new Promise((resolve, reject) => {
-    pending.push({ priority, seq: seq++, apiKey, teamId, body, resolve, reject });
+    pending.push({ priority, seq: seq++, apiKey, teamId, body, timeoutMs, resolve, reject });
     pump();
   });
 }
@@ -209,7 +210,7 @@ async function pump() {
     lastStart = Date.now();
     recentStarts.push(lastStart);
     if (pending.length) console.log(`[TMR] queue: ${pending.length} waiting (running priority ${job.priority}, ${recentStarts.length} used this minute)`);
-    try { job.resolve(await queryTMRDirect(job.apiKey, job.teamId, job.body)); }
+    try { job.resolve(await queryTMRDirect(job.apiKey, job.teamId, job.body, 0, job.timeoutMs)); }
     catch (err) { job.reject(err); }
   } finally {
     busy = false;
@@ -221,7 +222,7 @@ async function pump() {
 // connection can never block the request queue (and the cache) indefinitely.
 const TMR_TIMEOUT_MS = Number(process.env.TMR_TIMEOUT_MS) || 75000;
 
-async function queryTMRDirect(apiKey, teamId, body, attempt = 0) {
+async function queryTMRDirect(apiKey, teamId, body, attempt = 0, timeoutMs = TMR_TIMEOUT_MS) {
   const t0 = Date.now();
   const label = `${body.accounts?.[0]?.split('_')[0]} x${body.accounts?.length} ${body.dateRange?.startDate}..${body.dateRange?.endDate}`;
   let res;
@@ -230,12 +231,12 @@ async function queryTMRDirect(apiKey, teamId, body, attempt = 0) {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(TMR_TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (err) {
     if (err.name === 'TimeoutError' || err.name === 'AbortError') {
-      console.error(`[TMR] timeout after ${TMR_TIMEOUT_MS / 1000}s: ${label}`);
-      const e = new Error(`TMR did not respond within ${TMR_TIMEOUT_MS / 1000}s`);
+      console.error(`[TMR] timeout after ${timeoutMs / 1000}s: ${label}`);
+      const e = new Error(`TMR did not respond within ${timeoutMs / 1000}s`);
       e.status = 504;
       throw e;
     }
@@ -246,7 +247,7 @@ async function queryTMRDirect(apiKey, teamId, body, attempt = 0) {
     const wait = (attempt + 1) * 12000; // 12s, 24s, 36s
     console.warn(`[TMR] 429 rate limit, retrying in ${wait}ms (attempt ${attempt + 1})`);
     await new Promise(r => setTimeout(r, wait));
-    return queryTMRDirect(apiKey, teamId, body, attempt + 1);
+    return queryTMRDirect(apiKey, teamId, body, attempt + 1, timeoutMs);
   }
   if (!res.ok) {
     const text = await res.text().catch(() => '');

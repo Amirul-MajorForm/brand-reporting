@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { fetchAds } from '../api.js';
+import { fetchAds, fetchAdPreviews } from '../api.js';
 import { fmt } from '../theme.js';
 import { BreakableName } from '../campaignName.jsx';
 
@@ -7,14 +7,17 @@ import { BreakableName } from '../campaignName.jsx';
 // Preview images / videos load straight from Meta's or TikTok's CDN. Their links
 // expire after a day or more, so a stale tab shows a placeholder until refreshed.
 
-function Preview({ ad, theme }) {
+function Preview({ ad, theme, pending }) {
   const { image, video, link } = ad.preview || {};
   const [playing, setPlaying] = useState(false);
-  const [broken, setBroken] = useState(!image);
+  const [broken, setBroken] = useState(false);
   const box = {
     position: 'relative', width: '100%', aspectRatio: '4 / 5', borderRadius: 10, overflow: 'hidden',
     background: theme.surfaceAlt, border: `1px solid ${theme.border}`,
   };
+  if (pending) {
+    return <div style={{ ...box, animation: 'kpi-pulse 1.6s ease-in-out infinite' }} aria-label="Loading preview" />;
+  }
 
   if (playing && video) {
     return (
@@ -24,7 +27,7 @@ function Preview({ ad, theme }) {
       </div>
     );
   }
-  if (broken) {
+  if (broken || !image) {
     return (
       <div style={{ ...box, display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: 16, fontSize: 12, color: theme.textMuted }}>
         {video ? (
@@ -56,7 +59,7 @@ function Preview({ ad, theme }) {
   );
 }
 
-function AdCard({ ad, rank, theme, currency, commerce, platform }) {
+function AdCard({ ad, rank, theme, currency, commerce, platform, previewPending }) {
   const stats = [
     ['Spend', fmt(ad.spend, 'currency', currency)],
     ['Impr.', fmt(ad.impressions, 'compact')],
@@ -70,7 +73,7 @@ function AdCard({ ad, rank, theme, currency, commerce, platform }) {
   ];
   return (
     <div style={{ background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 12, padding: 12, display: 'flex', flexDirection: 'column', gap: 10, minWidth: 0 }}>
-      <Preview ad={ad} theme={theme} />
+      <Preview key={ad.preview?.image || 'none'} ad={ad} theme={theme} pending={previewPending} />
       <div style={{ display: 'flex', gap: 8, alignItems: 'baseline' }}>
         <span style={{ fontSize: 11, fontWeight: 700, color: theme.accent, fontFamily: "'Space Grotesk', sans-serif" }}>#{rank}</span>
         <div style={{ minWidth: 0 }}>
@@ -101,12 +104,21 @@ export default function TopAds({ target, params, theme }) {
   const { campaign, platform, lens, currency } = target;
   const commerce = target.variant === 'commerce';
   const [state, setState] = useState({ loading: true, data: null, error: null });
+  // Previews load after the numbers: { loading, map: { [ad_name]: preview }, available }
+  const [previews, setPreviews] = useState({ loading: true, map: {}, available: true });
 
   useEffect(() => {
     const ctrl = new AbortController();
     setState({ loading: true, data: null, error: null });
+    setPreviews({ loading: true, map: {}, available: true });
     fetchAds(params, { campaign, platform, lens, rev: commerce }, ctrl.signal)
-      .then(data => setState({ loading: false, data, error: null }))
+      .then(data => {
+        setState({ loading: false, data, error: null });
+        if (!data?.ads?.length) return setPreviews({ loading: false, map: {}, available: true });
+        return fetchAdPreviews(params, { campaign, platform, lens }, ctrl.signal)
+          .then(p => setPreviews({ loading: false, map: p.previews || {}, available: p.available !== false }))
+          .catch(e => { if (e.name !== 'AbortError') setPreviews({ loading: false, map: {}, available: false }); });
+      })
       .catch(e => { if (e.name !== 'AbortError') setState({ loading: false, data: null, error: e.message }); });
     return () => ctrl.abort();
   }, [campaign, platform, lens, commerce, params]);
@@ -126,11 +138,13 @@ export default function TopAds({ target, params, theme }) {
     <div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: 12 }}>
         {ads.map((ad, i) => (
-          <AdCard key={ad.ad_name} ad={ad} rank={i + 1} theme={theme} currency={currency} commerce={commerce} platform={platform} />
+          <AdCard key={ad.ad_name} ad={{ ...ad, preview: previews.map[ad.ad_name] || null }} rank={i + 1} theme={theme}
+            currency={currency} commerce={commerce} platform={platform} previewPending={previews.loading} />
         ))}
       </div>
       <div style={{ fontSize: 11, color: theme.textMuted, marginTop: 10 }}>
         Ranked by spend{state.data.totalAds > ads.length ? `; top ${ads.length} of ${state.data.totalAds} ads` : ''}. Amounts in {currency}.
+        {previews.loading ? ' Loading previews…' : !previews.available ? ' Previews are taking too long right now; try again in a few minutes.' : ''}
       </div>
     </div>
   );

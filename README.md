@@ -35,7 +35,10 @@ the two can change independently.
   highest-spend ads with a creative preview (image, playable video, and for Meta
   a "view ad as it appears" link and the ad headline), plus spend, impressions,
   CTR, CPM and ThruPlays / video views (ROAS and orders in Commerce Lens).
-  Loaded only when the tab is opened (one TMR request).
+  Loaded only when the tab is opened: the numbers first (one quick TMR
+  request), then the previews in a second request. If TMR is too slow with the
+  previews (TikTok video lookups can pass its 60s limit), the ads still show
+  with "Preview not available", and that is remembered for 3 minutes.
 - Date presets: last 7/14/30/60/90 days, month / quarter to date, this month,
   last month, custom.
 
@@ -77,7 +80,8 @@ to the Railway logs.
    | `GOALS_SHEET_PUB_URL`, `GOALS_BRAND_GID`, `GOALS_FX_GID` | no | Defaults to the MajorPace sheet |
    | `COMMERCE_TREND_START` | no | Default `2026-01-01` |
    | `TMR_TIMEOUT_MS`, `SESSION_TTL_HOURS`, `LOGIN_MAX_FAILURES` | no | |
-   | `OTHER_CLIENT_NAMES` | no | Comma-separated client names whose campaigns are always hidden |
+   | `OTHER_CLIENT_NAMES` | no | Comma-separated client names whose campaigns are always hidden (NOBO is shown) |
+   | `PREVIEW_TIMEOUT_MS` | no | How long Top ads waits for creative previews (default 45000) |
 
 3. Generate a domain (Settings > Networking), then set `APP_ORIGIN` to it.
 4. Run one instance only (rate limits, cache and the TMR queue are in memory).
@@ -114,13 +118,13 @@ to the Railway logs.
   refreshed. Only https links on Meta / TikTok hosts are passed to the browser,
   and the page's CSP allows images and video from exactly those CDNs. Google has
   no Top ads (search ads are text only).
-- Some OATSIDE ad accounts are shared regional accounts that also run other
-  clients' campaigns (seen: "Nobo Kids" in the ID TikTok account). Campaigns
-  whose name mentions another client are dropped from every TMR result before
-  anything else uses it. The list is `OTHER_CLIENT_NAMES` (default
-  `NOBO,Yoga Movement,Blackmores,BlueSG`); "Strong" is left out of the default
-  because the word could appear in OATSIDE campaign names. Dropped rows are
-  logged as `[filter] dropped ...`.
+- Some OATSIDE ad accounts are shared regional accounts. Campaigns whose name
+  mentions another client are dropped from every TMR result before anything
+  else uses it. The list is `OTHER_CLIENT_NAMES` (default
+  `Yoga Movement,Blackmores,BlueSG`). NOBO campaigns (e.g. "Nobo Kids" in the ID
+  TikTok account) are intentionally included in this dashboard. "Strong" is
+  left out of the default because the word could appear in OATSIDE campaign
+  names. Dropped rows are logged as `[filter] dropped ...`.
 - Signing out clears the cookie in that browser; to end every session at once,
   change `SESSION_SECRET` (or the password).
 
