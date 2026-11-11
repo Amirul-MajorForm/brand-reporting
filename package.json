@@ -1,0 +1,17 @@
+{
+  "name": "oatside-client-dashboard",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Client-facing OATSIDE paid media dashboard, prepared by MajorForm",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "build": "npm ci --prefix frontend && npm run build --prefix frontend && npm ci --omit=dev --prefix backend",
+    "start": "node backend/server.js",
+    "dev": "node tests/dev.js",
+    "test": "node --test tests/*.test.js",
+    "test:e2e": "node tests/e2e.js"
+  }
+}
