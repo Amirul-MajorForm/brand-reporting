@@ -13,11 +13,22 @@ const FORBIDDEN = /MajorView|MajorPace|FOREX|Two Minute|TMR|Opti Notes|LOW SPEND
 const failures = [];
 const check = (ok, msg) => { if (!ok) failures.push(msg); console.log(`${ok ? 'ok  ' : 'FAIL'} ${msg}`); };
 
+// Stand-in image / video for the Meta and TikTok CDNs (unreachable from tests)
+const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mN8+v9/PQAJjgOs1gEe9gAAAABJRU5ErkJggg==', 'base64');
+async function stubCdns(page) {
+  await page.route(/https:\/\/[^/]*(fbcdn\.net|tiktokcdn\.com)\//, route => {
+    const url = route.request().url();
+    if (/\.mp4|video/.test(url) && !/image|\.jpg/.test(url)) return route.fulfill({ status: 404, body: '' });
+    return route.fulfill({ status: 200, contentType: 'image/png', body: PNG });
+  });
+}
+
 const stack = await startStack();
 const browser = await chromium.launch();
 try {
   for (const width of [1280, 1440]) {
     const page = await browser.newPage({ viewport: { width, height: 900 } });
+    await stubCdns(page);
     const consoleErrors = [];
     page.on('console', m => { if (m.type() === 'error') consoleErrors.push(m.text()); });
     page.on('pageerror', e => consoleErrors.push(e.message));
@@ -54,6 +65,23 @@ try {
     await page.getByRole('dialog').locator('svg[role="img"]').waitFor();
     check(!FORBIDDEN.test(await page.getByRole('dialog').innerText()), `${width}: trend panel has no internal wording`);
     await page.screenshot({ path: `${out}/trend-${width}.png` });
+    await page.keyboard.press('Escape');
+
+    // Top ads (Meta Barista-Series campaign)
+    await page.getByRole('button', { name: 'View daily trend for SG_Meta_OATSIDE_Awareness_CPM_Reach_2026_Barista-Series' }).click();
+    await page.getByRole('tab', { name: 'Top ads' }).click();
+    const dialog = page.getByRole('dialog');
+    await dialog.getByText('#1').waitFor();
+    await page.waitForFunction(() => [...document.querySelectorAll('[role="dialog"] img')].some(i => i.complete && i.naturalWidth > 0));
+    const cards = await dialog.getByText(/^#\d$/).count();
+    check(cards === 3, `${width}: Top ads shows 3 Meta ads (${cards})`);
+    check(await dialog.getByText('Lock In with OATSIDE Espresso Roast').count() >= 1, `${width}: Top ads shows the ad headline`);
+    check(await dialog.getByText('Preview not available').count() === 1, `${width}: ad without a safe preview shows a placeholder`);
+    check(await dialog.locator('a[href*="evil"], img[src*="evil"]').count() === 0, `${width}: no non-CDN links rendered`);
+    const ext = await dialog.getByRole('link', { name: /View ad as it appears/ }).first().getAttribute('rel');
+    check(/noopener/.test(ext) && /noreferrer/.test(ext), `${width}: preview links open safely`);
+    check(!FORBIDDEN.test(await dialog.innerText()), `${width}: Top ads has no internal wording`);
+    await page.screenshot({ path: `${out}/top-ads-${width}.png` });
     await page.keyboard.press('Escape');
 
     // Market switch

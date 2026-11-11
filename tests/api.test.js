@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { startStack, signIn, PASSWORD } from './helpers.js';
 import { OTHER_CLIENT_ACCOUNTS, TEAM_ID } from './fake-tmr.js';
 import { ALLOWED_ACCOUNTS } from '../backend/tmr.js';
+import { safeUrl } from '../backend/ads.js';
 
 let stack, cookie;
 const DATA_ENDPOINTS = [
@@ -12,6 +13,8 @@ const DATA_ENDPOINTS = [
   '/api/commerce?dateRange=7',
   '/api/commerce/monthly',
   '/api/trend?dateRange=7&platform=meta&lens=brand&campaign=SG_Meta_OATSIDE_Awareness_CPM_Reach_2026_Barista-Series',
+  '/api/ads?dateRange=7&platform=meta&lens=brand&campaign=SG_Meta_OATSIDE_Awareness_CPM_Reach_2026_Barista-Series',
+  '/api/ads?dateRange=7&platform=tiktok&lens=brand&campaign=SG_TikTok_OATSIDE_Awareness_CPM_Reach_2026_Barista-Series',
 ];
 const get = (path, headers = {}) => fetch(`${stack.base}${path}`, { headers: { Cookie: cookie, ...headers } });
 
@@ -150,6 +153,65 @@ test('goals are OATSIDE only, scored, and carry no sheet internals', async () =>
   for (const key of ['hiddenRows', 'sheetStatus', 'budget', 'Budget']) {
     assert.ok(!JSON.stringify(goals).includes(`"${key}"`), key);
   }
+});
+
+// ---------------------------------------------------------------- top ads
+test('top ads: Meta ads ranked by spend with CDN previews only', async () => {
+  const body = await (await get(DATA_ENDPOINTS[6])).json();
+  assert.equal(body.ads.length, 3);
+  assert.ok(body.ads[0].spend >= body.ads[1].spend);
+  const top = body.ads[0];
+  assert.match(top.preview.image, /^https:\/\/[^/]+\.fbcdn\.net\//);
+  assert.match(top.preview.video, /\.mp4/);
+  assert.match(top.preview.link, /^https:\/\/fb\.me\//);
+  assert.equal(top.preview.title, 'Lock In with OATSIDE Espresso Roast');
+  assert.ok(top.ctr > 0 && top.cpm > 0 && top.thruplays > 0);
+  // The ad whose creative points elsewhere keeps its numbers but loses every link
+  const odd = body.ads.find(a => /Evil-Host/.test(a.ad_name));
+  assert.ok(odd && odd.spend > 0);
+  assert.ok(!odd.preview || (!odd.preview.image && !odd.preview.link && !odd.preview.video));
+  assert.ok(!JSON.stringify(body).includes('evil.example'));
+  assert.ok(!JSON.stringify(body).includes('javascript:'));
+});
+
+test('top ads: TikTok covers are upgraded to https and videos are playable links', async () => {
+  const body = await (await get(DATA_ENDPOINTS[7])).json();
+  assert.equal(body.ads.length, 3);
+  for (const ad of body.ads) {
+    assert.match(ad.preview.image, /^https:\/\/p16-common-sign\.tiktokcdn\.com\//);
+    assert.match(ad.preview.video, /^https:\/\/v16-tt4b\.tiktokcdn\.com\//);
+    assert.ok(ad.video_views > 0);
+  }
+});
+
+test('top ads: commerce view adds orders and ROAS', async () => {
+  const body = await (await get('/api/ads?dateRange=7&platform=meta&lens=commerce&rev=1&campaign=SG_Shopee_Meta_CPAS_Conversion_ROAS_2026_Always-On')).json();
+  assert.equal(body.ads.length, 2);
+  assert.ok(body.ads.every(a => a.orders > 0 && a.roas > 1));
+});
+
+test('top ads: Google, unlisted and other-client campaigns are refused', async () => {
+  assert.equal((await get('/api/ads?dateRange=7&platform=google&lens=brand&campaign=SG_Google_OATSIDE_Search_CPC_Traffic_2026_Brand-Terms')).status, 400);
+  for (const campaign of ['SG_Meta_YogaMovement_Awareness_CPM_Reach_2026_Studio', 'nope']) {
+    assert.equal((await get(`/api/ads?dateRange=7&platform=meta&lens=brand&campaign=${encodeURIComponent(campaign)}`)).status, 404);
+  }
+});
+
+test('safeUrl only passes https links on Meta / TikTok hosts', () => {
+  assert.equal(safeUrl('http://p16-common-sign.tiktokcdn.com/a.image'), 'https://p16-common-sign.tiktokcdn.com/a.image');
+  assert.ok(safeUrl('https://scontent-fra3-1.xx.fbcdn.net/v/x.jpg?oe=1'));
+  assert.ok(safeUrl('https://fb.me/abc'));
+  for (const bad of ['javascript:alert(1)', 'data:image/png;base64,AAAA', 'https://evil.example/x.jpg',
+    'https://fbcdn.net.evil.example/x.jpg', 'https://user:pw@scontent.xx.fbcdn.net/x.jpg', 'ftp://scontent.xx.fbcdn.net/x', '', null, 42]) {
+    assert.equal(safeUrl(bad), null, String(bad));
+  }
+});
+
+test('CSP allows ad previews only from Meta and TikTok CDNs', async () => {
+  const csp = (await fetch(`${stack.base}/health`)).headers.get('content-security-policy');
+  assert.match(csp, /img-src 'self' data: https:\/\/\*\.fbcdn\.net https:\/\/\*\.tiktokcdn\.com/);
+  assert.match(csp, /media-src 'self' https:\/\/\*\.fbcdn\.net/);
+  assert.doesNotMatch(csp, /img-src[^;]*\shttps:(\s|;|$)/); // no blanket https:
 });
 
 test('trend charts only work for campaigns the dashboard listed', async () => {

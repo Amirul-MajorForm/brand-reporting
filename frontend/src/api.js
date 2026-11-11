@@ -47,6 +47,10 @@ export const fetchGoals = (params, signal, { trend = false } = {}) =>
 export const fetchTrend = (params, { campaign, platform, lens, lpv = false, rev = false }, signal) =>
   request(withRange('/api/trend', params, { campaign, platform, lens, ...(lpv ? { lpv: '1' } : {}), ...(rev ? { rev: '1' } : {}) }), { signal });
 
+// Top ads with creative previews for one campaign (Meta / TikTok), on demand
+export const fetchAds = (params, { campaign, platform, lens, rev = false }, signal) =>
+  request(withRange('/api/ads', params, { campaign, platform, lens, ...(rev ? { rev: '1' } : {}) }), { signal });
+
 // Commerce Lens header chart: monthly totals since the start of the year
 export const fetchCommerceMonthly = signal => request('/api/commerce/monthly', { signal });
 

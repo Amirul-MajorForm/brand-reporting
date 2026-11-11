@@ -19,7 +19,8 @@ const C = (campaign_name, daily, ads) => ({ campaign_name, daily, ads });
 const DATA = {
   // ---------------- TikTok (SGD)
   ttads_7216573742091091970: { advertiser: '7216573742091091970', campaigns: [
-    C('SG_TikTok_OATSIDE_Awareness_CPM_Reach_2026_Barista-Series', { amount_spent: 118.4, impressions: 61250, clicks: 312, ttads_video_play_actions: 21400, ttads_reach: 24800, ttads_video_watched_6s: 5900 }),
+    C('SG_TikTok_OATSIDE_Awareness_CPM_Reach_2026_Barista-Series', { amount_spent: 118.4, impressions: 61250, clicks: 312, ttads_video_play_actions: 21400, ttads_reach: 24800, ttads_video_watched_6s: 5900 },
+      ['Video_1026_NA_Prospecting_pooootia_EN_1028', 'Video_1026_NA_Prospecting_oopeygooe_EN_1028', 'Video_1026_6s_RTG-Custom Audiences_Interview_EN']),
     C('SG_TikTok_OATSIDE_Consideration_CPLV_Traffic_2026_Coffee-Launch', { amount_spent: 82.1, impressions: 30500, clicks: 655, ttads_total_landing_page_view: 431, ttads_reach: 15100 }),
     C('SG_PP-All_TikTok_In-Feed_Conversions_Revenue_EN Oct 2026', { amount_spent: 0, ttads_gmv_cost: 152.7, ttads_gmv_orders: 31, ttads_gmv_gross_revenue: 912.4 }),
   ] },
@@ -34,7 +35,8 @@ const DATA = {
   ttads_7601715326036017169: { advertiser: '7601715326036017169', campaigns: [] },
   // ---------------- Meta brand (local currency)
   fads_act_764971328270854: { campaigns: [ // SG, SGD
-    C('SG_Meta_OATSIDE_Awareness_CPM_Reach_2026_Barista-Series', { amount_spent: 96.3, impressions: 15800, clicks: 120, fads_reach: 9100, fads_video_views: 3300, fads_video_thruplay_watched_actions: 900 }),
+    C('SG_Meta_OATSIDE_Awareness_CPM_Reach_2026_Barista-Series', { amount_spent: 96.3, impressions: 15800, clicks: 120, fads_reach: 9100, fads_video_views: 3300, fads_video_thruplay_watched_actions: 900 },
+      ['GIF_1026_NA_Prospecting_Coffee-Boss-Shouting_EN', 'GIF_1026_NA_Prospecting_Coffee-Elevator_EN', 'GIF_1026_NA_Prospecting_Evil-Host_EN']),
     C('SG_Meta_OATSIDE_Consideration_CPLV_Traffic_2026_Coffee-Launch', { amount_spent: 71.8, impressions: 9100, clicks: 402, fads_reach: 6100, fads_website_fb_landing_page_views: 288 }),
     C('SG_Meta_OATSIDE_Conversion_ROAS_Sales_2026_1111-Push', { amount_spent: 55.0, impressions: 7200, clicks: 160, fads_reach: 5000, fads_all_purchases: 9, fads_purchase_conversions_all: 301.5 }),
     // Run from the SG account although named ID_: must show under SG in SGD
@@ -88,6 +90,25 @@ const FX_CSV = [
   'SGD,1', 'MYR,0.30', 'PHP,43.10', 'VND,0.0000520', 'IDR,0.0000830', 'THB,0.039',
 ].join('\n');
 
+// Creative preview fields, shaped like TMR's (signed CDN links). One ad uses a
+// non-CDN host to prove the server drops it; TikTok covers come back as http.
+function creativeOf(ad) {
+  const slug = ad.replace(/[^A-Za-z0-9]+/g, '-');
+  if (/Evil-Host/.test(ad)) {
+    return { fads_ad_creative_thumbnail_url: 'https://evil.example/track.jpg', fads_ad_creative_image_url: 'javascript:alert(1)',
+      fads_ad_creative_video_url: '', fads_ad_preview_shareable_link: 'https://evil.example/phish', fads_ad_creative_title: 'Odd creative' };
+  }
+  return {
+    fads_ad_creative_thumbnail_url: `https://scontent-fra3-1.xx.fbcdn.net/v/t15/${slug}.jpg?stp=p360x360&oe=6AF96A70`,
+    fads_ad_creative_image_url: `https://scontent-fra3-1.xx.fbcdn.net/v/t15/${slug}-full.jpg?oe=6AF96A70`,
+    fads_ad_creative_video_url: `https://scontent-fra5-1.xx.fbcdn.net/o1/v/t2/${slug}.mp4?oe=6AF9B7EA`,
+    fads_ad_preview_shareable_link: `https://fb.me/${slug.slice(0, 12)}`,
+    fads_ad_creative_title: 'Lock In with OATSIDE Espresso Roast',
+    ttads_video_cover_url: `http://p16-common-sign.tiktokcdn.com/tos-alisg-p-0037/${slug}~tplv-noop.image?x-expires=1794460506`,
+    ttads_video_preview_url: `https://v16-tt4b.tiktokcdn.com/abc/6af54b5a/video/${slug}/?mime_type=video_mp4`,
+  };
+}
+
 const COMMON = new Set(['amount_spent', 'impressions', 'clicks', 'conversions', 'date', 'campaign_name', 'year_month', 'ad_name']);
 const DAY = 86400000;
 
@@ -121,11 +142,12 @@ function runQuery(body) {
         const date = new Date(t).toISOString().slice(0, 10);
         const k = factor(camp.campaign_name, t);
         ads.forEach((ad, ai) => {
-          const share = ads.length === 1 ? 1 : (ai === 0 ? 0.7 : 0.3);
+          const share = ads.length === 1 ? 1 : ai === 0 ? 0.6 : (0.4 / (ads.length - 1));
           const dims = {
             campaign_name: camp.campaign_name, date, year_month: date.slice(0, 7), ad_name: ad,
             fads_account_id: account.startsWith('fads_') ? account.replace(/^fads_/, '') : undefined,
             ttads_advertiser_id: acc.advertiser,
+            ...creativeOf(ad),
           };
           const key = dimensions.map(d => dims[d] ?? '').join('|');
           const row = groups.get(key) || Object.fromEntries(dimensions.map(d => [d, dims[d] ?? null]));

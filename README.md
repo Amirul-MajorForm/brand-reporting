@@ -15,6 +15,11 @@ the two can change independently.
   Orders, CPA, totals), and a monthly chart since `COMMERCE_TREND_START` in SGD
   with platform filters.
 - **Daily trend chart** per campaign (CPM / CTR / CPLV, ROAS in Commerce Lens).
+- **Top ads** per campaign (Meta and TikTok), in the same panel: the 12
+  highest-spend ads with a creative preview (image, playable video, and for Meta
+  a "view ad as it appears" link and the ad headline), plus spend, impressions,
+  CTR, CPM and ThruPlays / video views (ROAS and orders in Commerce Lens).
+  Loaded only when the tab is opened (one TMR request).
 - Date presets: last 7/14/30/60/90 days, month / quarter to date, this month,
   last month, custom.
 
@@ -84,6 +89,12 @@ to the Railway logs.
 - TikTok has no ThruPlay; TikTok views campaigns show a dash for ThruPlay / CPTP.
   TikTok also refuses Reach summed over more than one day, so TikTok Reach shows
   a dash for multi-day ranges.
+- Ad preview links from TMR are signed CDN URLs that expire (Meta after a few
+  days, TikTok after about 24 hours). They are fetched fresh with each load and
+  never stored; a tab left open past expiry shows "Preview not available" until
+  refreshed. Only https links on Meta / TikTok hosts are passed to the browser,
+  and the page's CSP allows images and video from exactly those CDNs. Google has
+  no Top ads (search ads are text only).
 - Signing out clears the cookie in that browser; to end every session at once,
   change `SESSION_SECRET` (or the password).
 

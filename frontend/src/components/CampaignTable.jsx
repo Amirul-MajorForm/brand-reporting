@@ -348,7 +348,7 @@ export function PlatformSection({ platform, label, data, theme, loading, lens = 
                                   {onTrend && (
                                     <button
                                       onClick={() => onTrend({ campaign: val, platform, lens, currency, variant })}
-                                      title="View daily trend (CPM / CTR / CPLV)"
+                                      title={platform === 'google' ? 'View daily trend' : 'View daily trend and top ads'}
                                       aria-label={`View daily trend for ${val}`}
                                       style={{
                                         flexShrink: 0, width: 24, height: 24, marginTop: -2, borderRadius: 6,

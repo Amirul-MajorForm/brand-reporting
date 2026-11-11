@@ -10,6 +10,7 @@ import {
   parsePlatformResult, splitByMarket, getDateRange,
 } from './tmr.js';
 import { securityHeaders, sameOriginOnly } from './security.js';
+import { ADS_PLATFORMS, ADS_DIMENSIONS, ADS_METRICS, ADS_TEXT_FIELDS, buildTopAds } from './ads.js';
 import {
   requireAuth, isAuthenticated, checkPassword, setSessionCookie, clearSessionCookie,
   loginBlocked, recordFailure, clearFailures,
@@ -97,6 +98,7 @@ function mergeRows(...results) {
     if (!prev) { byName.set(key, { ...r }); continue; }
     for (const [k, v] of Object.entries(r)) {
       if (DIMENSION_KEYS.includes(k)) continue;
+      if (ADS_TEXT_FIELDS.includes(k)) { if (prev[k] == null || prev[k] === '') prev[k] = v; continue; }
       const n = parseFloat(v);
       if (isFinite(n)) prev[k] = (parseFloat(prev[k]) || 0) + n;
     }
@@ -455,17 +457,46 @@ function normalizeDate(v) {
   return s.slice(0, 10);
 }
 
+// Shared by /api/trend and /api/ads. Strings only (no arrays from ?a=1&a=2);
+// the campaign name is only ever a filter inside OATSIDE's own accounts, so it
+// cannot reach other data.
+function campaignParams(query, platforms) {
+  const { platform, campaign, lens = 'brand' } = query;
+  if (typeof platform !== 'string' || !platforms.includes(platform)
+    || typeof campaign !== 'string' || !campaign.trim() || campaign.length > 300
+    || !['brand', 'commerce'].includes(lens)) return null;
+  return { platform, campaign, lens };
+}
+
+// The campaign's own account first (from its market prefix, or the market's
+// CPAS accounts), then every other OATSIDE account of that kind
+function campaignAccounts(lens, platform, campaign) {
+  const market = detectMarket(campaign);
+  const cpas = lens === 'commerce' && platform === 'meta';
+  const all = cpas ? [...CPAS_ACCOUNTS.local, ...CPAS_ACCOUNTS.SGD] : ALL_ACCOUNTS[platform];
+  const own = cpas ? all.filter(a => CPAS_MARKET[a] === market) : [ACCOUNTS[platform]?.[market]].filter(Boolean);
+  return { own, others: all.filter(a => !own.includes(a)) };
+}
+
+const hasDelivery = r => (r?.data || []).some(row => parseFloat(row.amount_spent) > 0 || parseFloat(row.ttads_gmv_cost) > 0 || parseFloat(row.impressions) > 0);
+
+async function queryCampaign(lens, platform, campaign, metrics, range, opts) {
+  const { own, others } = campaignAccounts(lens, platform, campaign);
+  let raw = own.length ? await makeQuery(own, metrics, range, opts) : null;
+  // Not in the expected account (e.g. an ID_ campaign run from the SG account): search the rest
+  if (!hasDelivery(raw) && others.length) {
+    console.log(`[campaign] ${campaign} not found in ${own.join(',') || 'no matching account'}; searching ${others.length} other accounts`);
+    raw = await makeQuery(others, metrics, range, opts);
+  }
+  return raw;
+}
+
 app.get('/api/trend', async (req, res) => {
   try {
     if (!requireKey(res)) return;
-    const { platform, campaign, lens = 'brand' } = req.query;
-    // Strings only (no arrays from ?a=1&a=2); the campaign name is only ever a
-    // filter inside OATSIDE's own accounts, so it cannot reach other data
-    if (typeof platform !== 'string' || !Object.hasOwn(TREND_METRICS, platform)
-      || typeof campaign !== 'string' || !campaign.trim() || campaign.length > 300
-      || !['brand', 'commerce'].includes(lens)) {
-      return res.status(400).json({ error: 'Invalid request.' });
-    }
+    const params = campaignParams(req.query, Object.keys(TREND_METRICS));
+    if (!params) return res.status(400).json({ error: 'Invalid request.' });
+    const { platform, campaign, lens } = params;
     const range = resolveDateRange(req.query);
     const withLpv = req.query.lpv === '1' && TREND_LPV[platform];
     const revKey = lens === 'commerce' && platform === 'meta' ? 'cpas' : platform;
@@ -473,33 +504,18 @@ app.get('/api/trend', async (req, res) => {
     const metrics = [...TREND_BASE, ...(TREND_EXTRA[platform] || []),
       ...(withLpv ? [TREND_LPV[platform]] : []), ...(withRev ? TREND_REVENUE[revKey] : [])];
 
-    const market = detectMarket(campaign);
     // Only campaigns the dashboard itself listed can be charted, so a signed-in
     // browser cannot spend the shared TMR quota on arbitrary names
     if (!(await isListedCampaign(lens, platform, campaign, range))) {
       return res.status(404).json({ error: 'No data for this campaign in this period.' });
     }
-    const all = lens === 'commerce' && platform === 'meta'
-      ? [...CPAS_ACCOUNTS.local, ...CPAS_ACCOUNTS.SGD]
-      : ALL_ACCOUNTS[platform];
-    const own = lens === 'commerce' && platform === 'meta'
-      ? all.filter(a => CPAS_MARKET[a] === market)
-      : [ACCOUNTS[platform]?.[market]].filter(Boolean);
-    const others = all.filter(a => !own.includes(a));
-
     const result = await cached(`trend_${lens}_${platform}_${withLpv ? 'lpv' : 'base'}${withRev ? '_rev' : ''}_${campaign}_${range.startDate}_${range.endDate}`, async () => {
       const opts = {
         dimensions: ['date'],
         filters: [{ fieldId: 'campaign_name', operator: 'equals', value: campaign }],
         priority: PRIORITY.user, // the user is waiting on this one
       };
-      const hasData = r => (r?.data || []).some(row => parseFloat(row.amount_spent) > 0 || parseFloat(row.ttads_gmv_cost) > 0 || parseFloat(row.impressions) > 0);
-      let raw = own.length ? await makeQuery(own, metrics, range, opts) : null;
-      // Not in the expected account (e.g. an ID_ campaign run from the SG account): search the rest
-      if (!hasData(raw) && others.length) {
-        console.log(`[trend] ${campaign} not found in ${own.join(',') || 'no matching account'} — searching ${others.length} other accounts`);
-        raw = await makeQuery(others, metrics, range, opts);
-      }
+      const raw = await queryCampaign(lens, platform, campaign, metrics, range, opts);
       const byDate = new Map();
       for (const row of raw?.data || []) {
         const r = Object.fromEntries(Object.entries(row).map(([k, v]) => [k.replace(/^(ttads|fads|gadw)_/, ''), v]));
@@ -523,6 +539,36 @@ app.get('/api/trend', async (req, res) => {
     res.json(result);
   } catch (err) {
     sendError(res, 'trend', err);
+  }
+});
+
+// Top ads for one campaign (on demand, from the trend panel): ad-level results
+// with a creative preview, Meta and TikTok only. ?rev=1 adds orders / revenue.
+app.get('/api/ads', async (req, res) => {
+  try {
+    if (!requireKey(res)) return;
+    const params = campaignParams(req.query, ADS_PLATFORMS);
+    if (!params) return res.status(400).json({ error: 'Invalid request.' });
+    const { platform, campaign, lens } = params;
+    const range = resolveDateRange(req.query);
+    if (!(await isListedCampaign(lens, platform, campaign, range))) {
+      return res.status(404).json({ error: 'No data for this campaign in this period.' });
+    }
+    const withRev = req.query.rev === '1';
+    const revKey = lens === 'commerce' && platform === 'meta' ? 'cpas' : platform;
+    const metrics = [...ADS_METRICS[platform], ...(withRev ? TREND_REVENUE[revKey] : [])];
+
+    const result = await cached(`ads_${lens}_${platform}${withRev ? '_rev' : ''}_${campaign}_${range.startDate}_${range.endDate}`, async () => {
+      const raw = await queryCampaign(lens, platform, campaign, metrics, range, {
+        dimensions: ADS_DIMENSIONS[platform],
+        filters: [{ fieldId: 'campaign_name', operator: 'equals', value: campaign }],
+        priority: PRIORITY.user,
+      });
+      return { campaign, platform, lens, dateRange: range, hasRevenue: withRev, ...buildTopAds(raw?.data, platform) };
+    });
+    res.json(result);
+  } catch (err) {
+    sendError(res, 'ads', err);
   }
 });
 

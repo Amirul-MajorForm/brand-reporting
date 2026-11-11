@@ -11,7 +11,9 @@ const CSP = [
   // React inline style attributes and the small <style> blocks need inline styles
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
   "font-src 'self' https://fonts.gstatic.com",
-  "img-src 'self' data:",
+  // Ad previews load straight from Meta's and TikTok's CDNs (see ads.js)
+  "img-src 'self' data: https://*.fbcdn.net https://*.tiktokcdn.com https://*.tiktokcdn-us.com",
+  "media-src 'self' https://*.fbcdn.net https://*.tiktokcdn.com https://*.tiktokcdn-us.com",
   "connect-src 'self'",
   "frame-ancestors 'none'",
   "base-uri 'none'",

@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { fetchTrend } from '../api.js';
 import { parseCampaignName, BreakableName } from '../campaignName.jsx';
+import TopAds from './TopAds.jsx';
+
+// Ad previews exist for Meta and TikTok (Google search ads are text only)
+const ADS_PLATFORMS = ['meta', 'tiktok'];
 
 // Campaign trend: daily CPM / CTR / CPLV for one campaign, loaded on demand.
 // Hand-drawn SVG (no chart library) to keep the page light.
@@ -185,6 +189,8 @@ export default function TrendPanel({ target, params, goals, theme, darkMode, onC
     : ['CPM', 'CTR', 'CPLV'].find(m => goalFor(m) && (m !== 'CPLV' || cplvAvailable)) || (cplvAvailable ? 'CPLV' : 'CPM');
 
   const [metric, setMetric] = useState(initial);
+  const adsAvailable = ADS_PLATFORMS.includes(platform);
+  const [section, setSection] = useState(target.section === 'ads' && adsAvailable ? 'ads' : 'trend');
   const [view, setView] = useState('chart');
   // Two datasets, fetched only when a tab needs them:
   //   base: spend / impressions / clicks   -> CPM, CTR
@@ -195,13 +201,13 @@ export default function TrendPanel({ target, params, goals, theme, darkMode, onC
   const need = metric === 'ROAS' ? 'rev' : metric === 'CPLV' ? 'lpv' : (sets.rev ? 'rev' : sets.lpv ? 'lpv' : 'base');
 
   useEffect(() => {
-    if (sets[need] || errors[need]) return;
+    if (section !== 'trend' || sets[need] || errors[need]) return;
     const ctrl = new AbortController();
     fetchTrend(params, { campaign, platform, lens, lpv: need === 'lpv', rev: need === 'rev' }, ctrl.signal)
       .then(data => setSets(s => ({ ...s, [need]: data })))
       .catch(e => { if (e.name !== 'AbortError') setErrors(x => ({ ...x, [need]: e.message })); });
     return () => ctrl.abort();
-  }, [need, sets, errors, campaign, platform, lens, params]);
+  }, [section, need, sets, errors, campaign, platform, lens, params]);
 
   const state = { loading: !sets[need] && !errors[need], data: sets[need], error: errors[need] };
 
@@ -255,7 +261,7 @@ export default function TrendPanel({ target, params, goals, theme, darkMode, onC
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '18px 20px 12px', borderBottom: `1px solid ${theme.border}` }}>
           <div style={{ minWidth: 0, flex: 1 }}>
             <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: theme.textMuted, fontFamily: "'Space Grotesk', sans-serif", marginBottom: 4 }}>
-              {{ tiktok: 'TikTok', meta: lens === 'commerce' ? 'Meta CPAS' : 'Meta', google: 'Google' }[platform]} · Daily trend
+              {{ tiktok: 'TikTok', meta: lens === 'commerce' ? 'Meta CPAS' : 'Meta', google: 'Google' }[platform]} · {section === 'ads' ? 'Top ads' : 'Daily trend'}
             </div>
             {parsed && <div style={{ fontSize: 17, fontWeight: 700, overflowWrap: 'anywhere' }}>{parsed.descriptor}</div>}
             <div style={{ fontSize: parsed ? 12 : 15, fontWeight: parsed ? 400 : 700, color: parsed ? theme.textMuted : theme.textPrimary, overflowWrap: 'anywhere', marginTop: 2 }}>
@@ -265,6 +271,29 @@ export default function TrendPanel({ target, params, goals, theme, darkMode, onC
           <button onClick={onClose} aria-label="Close" style={{ border: 'none', background: theme.surfaceAlt, color: theme.textSecondary, width: 32, height: 32, borderRadius: 8, cursor: 'pointer', fontSize: 18, lineHeight: 1, flexShrink: 0 }}>×</button>
         </div>
 
+        {adsAvailable && (
+          <div role="tablist" aria-label="Section" style={{ display: 'flex', gap: 4, padding: '0 20px', borderBottom: `1px solid ${theme.border}` }}>
+            {[['trend', 'Daily trend'], ['ads', 'Top ads']].map(([id, label]) => (
+              <button key={id} role="tab" aria-selected={section === id} onClick={() => setSection(id)}
+                style={{
+                  padding: '10px 4px', marginRight: 16, border: 'none', background: 'transparent', cursor: 'pointer',
+                  fontSize: 13, fontWeight: 600, fontFamily: "'DM Sans', sans-serif",
+                  color: section === id ? theme.textPrimary : theme.textMuted,
+                  borderBottom: `2px solid ${section === id ? theme.accent : 'transparent'}`, marginBottom: -1,
+                }}>
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {section === 'ads' && (
+          <div style={{ padding: '16px 20px 20px' }}>
+            <TopAds target={target} params={params} theme={theme} />
+          </div>
+        )}
+
+        {section === 'trend' && (
         <div style={{ padding: '14px 20px 20px' }}>
           {/* Controls: metric + view */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 14 }}>
@@ -350,6 +379,7 @@ export default function TrendPanel({ target, params, goals, theme, darkMode, onC
             Days without delivery show as gaps.{goal && METRICS[metric].money && currency !== accountCurrency ? ` Values converted from ${accountCurrency} to ${currency}.` : ''}
           </div>
         </div>
+        )}
       </div>
     </div>
   );
