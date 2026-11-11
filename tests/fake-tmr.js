@@ -7,7 +7,8 @@
 // dashboard never asks for it.
 //
 // Test hooks: GET /__fake/requests, POST /__fake/reset, POST /__fake/fail
-// ({ status, message, count }) to make the next run-queries fail.
+// ({ status, message, count }) to make the next run-queries fail, POST
+// /__fake/delay ({ ms }) to slow every run-query down.
 
 import http from 'http';
 
@@ -168,6 +169,7 @@ function runQuery(body) {
 export function startFakeTMR(port = 0) {
   const requests = [];
   let failures = [];
+  let delayMs = 5;
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://x');
     const send = (status, body, type = 'application/json') => {
@@ -179,6 +181,7 @@ export function startFakeTMR(port = 0) {
     req.on('end', () => {
       if (url.pathname === '/__fake/requests') return send(200, requests);
       if (url.pathname === '/__fake/reset') { requests.length = 0; failures = []; return send(200, { ok: true }); }
+      if (url.pathname === '/__fake/delay') { delayMs = Number(JSON.parse(raw || '{}').ms) || 5; return send(200, { ok: true }); }
       if (url.pathname === '/__fake/fail') {
         const { status = 500, message = 'boom', count = 1 } = JSON.parse(raw || '{}');
         failures = Array.from({ length: count }, () => ({ status, message }));
@@ -199,7 +202,7 @@ export function startFakeTMR(port = 0) {
         const fail = failures.shift();
         if (fail) return send(fail.status, { error: { message: fail.message } });
         const out = runQuery(body);
-        return setTimeout(() => send(out.status, out.body), 5);
+        return setTimeout(() => send(out.status, out.body), delayMs);
       }
       send(404, { error: { message: 'Not found' } });
     });

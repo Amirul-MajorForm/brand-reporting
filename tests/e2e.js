@@ -35,6 +35,7 @@ try {
 
     await page.goto(stack.base);
     await page.getByLabel('Password').waitFor();
+    check(await page.locator('.os-splash').count() === 0, `${width}: loading screen gone once the login form shows`);
     check(!(await page.content()).match(/campaign/i), `${width}: logged-out page shows no campaign data`);
     await page.screenshot({ path: `${out}/login-${width}.png` });
 
@@ -44,7 +45,22 @@ try {
     check((await page.getByRole('alert').innerText()).includes('Incorrect password'), `${width}: wrong password shows an error`);
 
     await page.getByLabel('Password').fill(PASSWORD);
+    await stack.setDelay(width === 1280 ? 1500 : 5); // first run: slow data, to see the loading screen
     await page.getByRole('button', { name: 'Sign in' }).click();
+    if (width === 1280) {
+      await page.getByTestId('splash').waitFor({ timeout: 3000 });
+      const fills = [];
+      for (const ms of [300, 900, 1500]) {
+        await page.waitForTimeout(ms - (fills.length ? [300, 900, 1500][fills.length - 1] : 0));
+        fills.push(await page.locator('.os-logo-fill').evaluate(el => el.offsetTop));
+        await page.screenshot({ path: `${out}/splash-${width}-${fills.length}.png` });
+      }
+      check(new Set(fills).size > 1, `${width}: loading logo animates (fill offsets ${fills.join(', ')})`);
+      check(/Loading your dashboard/.test(await page.getByTestId('splash').innerText()), `${width}: loading screen message`);
+    }
+    await page.getByTestId('splash').waitFor({ state: 'detached', timeout: 25000 });
+    check(true, `${width}: loading screen fades out after sign-in`);
+    await stack.setDelay(5);
     await page.getByText('Goal Tracking').waitFor();
     await page.getByText('Barista-Series', { exact: false }).first().waitFor();
     await page.getByText(/on track/).waitFor();

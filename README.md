@@ -15,6 +15,11 @@ the two can change independently.
   Orders, CPA, totals), and a monthly chart since `COMMERCE_TREND_START` in SGD
   with platform filters.
 - **Daily trend chart** per campaign (CPM / CTR / CPLV, ROAS in Commerce Lens).
+- **Loading screen**: the OATSIDE logo fills up with a wave (black, or yellow in
+  dark mode) while the app starts and until the first numbers arrive after
+  sign-in (20 seconds at most), with messages that change on long waits. It is
+  in `index.html` so it shows on the very first paint; a still logo is shown
+  when the device asks for reduced motion.
 - **Top ads** per campaign (Meta and TikTok), in the same panel: the 12
   highest-spend ads with a creative preview (image, playable video, and for Meta
   a "view ad as it appears" link and the ad headline), plus spend, impressions,

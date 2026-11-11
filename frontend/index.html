@@ -5,6 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>OATSIDE Performance</title>
     <meta name="robots" content="noindex, nofollow" />
+    <!-- Sets data-theme before first paint so the loading screen matches the saved theme -->
+    <script src="/theme-init.js"></script>
+    <link rel="preload" as="image" href="/logo-black.png" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -14,14 +17,70 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <style>
       *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-      body { font-family: 'DM Sans', sans-serif; }
-      body { background: #F2F2F2; }
+      body { font-family: 'DM Sans', sans-serif; background: #F2F2F2; }
+      :root[data-theme="dark"] body { background: #121010; }
       @keyframes spin { to { transform: rotate(360deg); } }
       @keyframes kpi-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+      /* ------------------------------------------------------------------
+         Loading screen: the OATSIDE wordmark fills up from the bottom with a
+         wavy top, like a bottle being poured. Shared by the static markup
+         below (first paint, before the app's code loads) and Splash.jsx.
+         ------------------------------------------------------------------ */
+      .os-splash {
+        position: fixed; inset: 0; z-index: 1000;
+        display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 26px;
+        background: #F2F2F2; color: #707070;
+        transition: opacity 0.35s ease, visibility 0.35s;
+        --os-empty: #d9d6d2; --os-full: #000;
+      }
+      :root[data-theme="dark"] .os-splash { background: #121010; color: #959595; --os-empty: #3a3535; --os-full: #F7DF53; }
+      .os-splash--leaving { opacity: 0; visibility: hidden; }
+      .os-logo {
+        position: relative; overflow: hidden;
+        width: min(260px, 70vw); aspect-ratio: 738 / 131;
+        background: var(--os-empty);
+        -webkit-mask: url(/logo-black.png) center / contain no-repeat;
+                mask: url(/logo-black.png) center / contain no-repeat;
+      }
+      .os-logo-fill {
+        position: absolute; left: 0; right: 0; top: 105%; height: 160%;
+        background: var(--os-full);
+        /* smooth sine wave on top (repeats sideways), solid below it */
+        --os-wave: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='48' height='10'%3E%3Cpath d='M0 5 C8 0 16 0 24 5 S40 10 48 5 V10 H0 Z'/%3E%3C/svg%3E");
+        -webkit-mask: var(--os-wave) 0 0 / 48px 10px repeat-x, linear-gradient(#000, #000) 0 9px / 100% 100% no-repeat;
+                mask: var(--os-wave) 0 0 / 48px 10px repeat-x, linear-gradient(#000, #000) 0 9px / 100% 100% no-repeat;
+        animation: os-rise 2.6s cubic-bezier(.45,.05,.35,1) infinite, os-wave 1s linear infinite;
+      }
+      @keyframes os-rise {
+        0%   { top: 105%; opacity: 1; }
+        68%  { top: -12%; opacity: 1; }
+        84%  { top: -12%; opacity: 1; }
+        100% { top: -12%; opacity: 0; }
+      }
+      @keyframes os-wave { to { -webkit-mask-position: 48px 0, 0 9px; mask-position: 48px 0, 0 9px; } }
+      .os-splash-msg {
+        font-size: 14px; letter-spacing: 0.01em; min-height: 20px; text-align: center; padding: 0 24px;
+        animation: os-fade-in 0.5s ease both;
+      }
+      @keyframes os-fade-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+      .os-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+      @media (prefers-reduced-motion: reduce) {
+        .os-logo { background: var(--os-full); }
+        .os-logo-fill { display: none; }
+        .os-splash-msg { animation: none; }
+        .os-splash { transition: none; }
+      }
     </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <!-- Replaced by the app (Splash.jsx renders the same markup) -->
+      <div class="os-splash" role="status">
+        <div class="os-logo" aria-hidden="true"><div class="os-logo-fill"></div></div>
+        <p class="os-splash-msg">Loading your dashboard</p>
+      </div>
+    </div>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

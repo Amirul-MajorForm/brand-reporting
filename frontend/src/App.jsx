@@ -9,6 +9,12 @@ import GoalTracker from './components/GoalTracker.jsx';
 import TrendPanel from './components/TrendPanel.jsx';
 import Sidebar from './components/Sidebar.jsx';
 import Login from './components/Login.jsx';
+import Splash from './components/Splash.jsx';
+
+// The loading screen stays up until the first numbers arrive, but never longer
+// than this (the tables then show their own loading placeholders)
+const SPLASH_MAX_MS = 20000;
+const SPLASH_FADE_MS = 350;
 
 const MARKET_CODES = (...sources) => Object.assign({}, ...sources.map(s => s?.markets || {}));
 
@@ -19,6 +25,7 @@ function useDarkMode() {
   });
   useEffect(() => {
     try { localStorage.setItem('os_theme', darkMode ? 'dark' : 'light'); } catch { /* storage unavailable */ }
+    document.documentElement.dataset.theme = darkMode ? 'dark' : 'light';
   }, [darkMode]);
   return [darkMode, setDarkMode];
 }
@@ -40,7 +47,7 @@ export default function App() {
     setAuth('out');
   }, []);
 
-  if (auth === 'checking') return <div style={{ minHeight: '100vh', background: theme.bg }} />;
+  if (auth === 'checking') return <Splash />;
   if (auth === 'out') return <Login theme={theme} onSuccess={() => setAuth('in')} />;
   return <Dashboard darkMode={darkMode} setDarkMode={setDarkMode} onLogout={handleLogout} />;
 }
@@ -70,6 +77,21 @@ function Dashboard({ darkMode, setDarkMode, onLogout }) {
   const [goalsError, setGoalsError] = useState(null);
 
   const theme = darkMode ? DARK : LIGHT;
+
+  // Loading screen until the first brand data (or an error) arrives
+  const [splash, setSplash] = useState('shown'); // shown | leaving | gone
+  const firstLoadDone = data != null || error != null;
+  useEffect(() => {
+    if (splash !== 'shown') return undefined;
+    if (firstLoadDone) { setSplash('leaving'); return undefined; }
+    const t = setTimeout(() => setSplash('leaving'), SPLASH_MAX_MS);
+    return () => clearTimeout(t);
+  }, [firstLoadDone, splash]);
+  useEffect(() => {
+    if (splash !== 'leaving') return undefined;
+    const t = setTimeout(() => setSplash('gone'), SPLASH_FADE_MS);
+    return () => clearTimeout(t);
+  }, [splash]);
 
   // First day of the selected range (YYYY-MM-DD), for "vs previous month" labels
   function computeRangeStart(params) {
@@ -241,6 +263,8 @@ function Dashboard({ darkMode, setDarkMode, onLogout }) {
           to { transform: rotate(360deg); }
         }
       `}</style>
+
+      {splash !== 'gone' && <Splash leaving={splash === 'leaving'} />}
 
       <Sidebar
         activeTab={activeTab}
