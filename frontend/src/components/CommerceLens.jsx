@@ -11,28 +11,23 @@ const CAMPAIGN_PLATFORMS = [
 // platform whose name contains "_Sales_" or "_Conversion_".
 // CPAS comes as one block per billing currency, so mixed-currency markets
 // (e.g. ID: IDR and SGD) get separate sections instead of a summed total.
-const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-// Previous calendar month's ROAS (from the monthly data, SGD) for one source:
-// 'cpas' | 'tiktok' | 'meta' | 'google'. The month is the one before the
-// selected range starts (Last 7 days in Nov -> Oct; Last month = Oct -> Sep).
-function makeRoasPrev(monthlyData, market, rangeStart, source) {
-  if (!monthlyData || !rangeStart) return null;
-  const y = Number(rangeStart.slice(0, 4)), m = Number(rangeStart.slice(5, 7));
-  const py = m === 1 ? y - 1 : y, pm = m === 1 ? 12 : m - 1;
-  const key = `${py}-${String(pm).padStart(2, '0')}`;
-  const roas = x => (x && x.spend > 0 && x.revenue > 0 ? x.revenue / x.spend : null);
-  const byCampaign = monthlyData.campaignMonths?.[market]?.[source] || {};
-  const month = (monthlyData.markets?.[market] || []).find(x => x.month === key);
+const fmtDay = iso => new Date(`${iso}T00:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+
+// "vs previous month" figures for one table (see /api/commerce/compare)
+function makeCompare(compareData, prevBlock) {
+  if (!compareData?.comparison || !prevBlock) return null;
+  const { startDate, endDate, label } = compareData.comparison;
   return {
-    label: MON[pm - 1],
-    campaign: name => roas(byCampaign[name]?.[key]),
-    total: roas(month?.byPlatform?.[source]),
+    label,
+    title: `${fmtDay(startDate)} – ${fmtDay(endDate)}`,
+    total: prevBlock.total,
+    campaign: name => prevBlock.campaigns?.[name],
   };
 }
 
-export default function CommerceLens({ theme, darkMode, commerce, campaigns, loading, onTrend, monthly, marketName, market, rangeStart }) {
-  const roasPrevFor = source => makeRoasPrev(monthly?.data, market, rangeStart, source);
+export default function CommerceLens({ theme, darkMode, commerce, campaigns, loading, onTrend, monthly, marketName, market, compare, params }) {
+  const prev = compare?.markets?.[market];
   return (
     <div>
       <CommerceTrend
@@ -43,12 +38,13 @@ export default function CommerceLens({ theme, darkMode, commerce, campaigns, loa
         darkMode={darkMode}
         marketName={marketName}
       />
-      <CommerceTables theme={theme} commerce={commerce} campaigns={campaigns} loading={loading} onTrend={onTrend} roasPrevFor={roasPrevFor} />
+      <CommerceTables theme={theme} commerce={commerce} campaigns={campaigns} loading={loading} onTrend={onTrend} params={params}
+        compareFor={(kind, key) => makeCompare(compare, kind === 'cpas' ? prev?.cpas?.find(b => b.currency === key) : prev?.campaigns?.[key])} />
     </div>
   );
 }
 
-function CommerceTables({ theme, commerce, campaigns, loading, onTrend, roasPrevFor }) {
+function CommerceTables({ theme, commerce, campaigns, loading, onTrend, compareFor, params }) {
   const cpas = commerce?.cpas ?? [];
   const multiCurrency = cpas.length > 1;
   const campaignSections = CAMPAIGN_PLATFORMS.filter(p => campaigns?.[p.key]?.campaigns?.length > 0);
@@ -86,7 +82,8 @@ function CommerceTables({ theme, commerce, campaigns, loading, onTrend, roasPrev
           lens="commerce"
           onTrend={onTrend}
           variant="commerce"
-          roasPrev={roasPrevFor('cpas')}
+          compare={compareFor('cpas', block.currency)}
+          params={params}
         />
       ))}
       {campaignSections.map(p => (
@@ -100,7 +97,8 @@ function CommerceTables({ theme, commerce, campaigns, loading, onTrend, roasPrev
           lens="brand"
           onTrend={onTrend}
           variant="commerce"
-          roasPrev={roasPrevFor(p.key)}
+          compare={compareFor('campaigns', p.key)}
+          params={params}
         />
       ))}
     </div>

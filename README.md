@@ -14,6 +14,17 @@ the two can change independently.
 - **Commerce Lens**: Meta CPAS and commerce campaigns (Spend, Revenue, ROAS,
   Orders, CPA, totals), and a monthly chart since `COMMERCE_TREND_START` in SGD
   with platform filters.
+- **Commerce vs previous month**: Spend, Revenue, ROAS and Orders show the
+  % change against the same dates one month earlier (4 to 10 Nov vs 4 to 10 Oct;
+  Last month vs the month before), on the KPI tiles, each campaign and the total
+  row. Ranges longer than a month compare with the equal-length period just
+  before. Spend changes are shown neutral (grey); the others green / red.
+  Campaigns renamed each month (e.g. "... Oct 2026") have no campaign-level
+  comparison, but are still in the table totals.
+- **Language split** (Commerce Lens, Meta and TikTok): the "Aa" button on a
+  campaign expands it into one row per ad language (EN / BM in MY, EN / BI in
+  ID ...), read from the language code in each ad's name, with share of spend
+  and the best-ROAS language marked (among languages with at least 10% of spend).
 - **Daily trend chart** per campaign (CPM / CTR / CPLV, ROAS in Commerce Lens).
 - **Loading screen**: the OATSIDE logo fills up with a wave (black, or yellow in
   dark mode) while the app starts and until the first numbers arrive after
@@ -66,6 +77,7 @@ to the Railway logs.
    | `GOALS_SHEET_PUB_URL`, `GOALS_BRAND_GID`, `GOALS_FX_GID` | no | Defaults to the MajorPace sheet |
    | `COMMERCE_TREND_START` | no | Default `2026-01-01` |
    | `TMR_TIMEOUT_MS`, `SESSION_TTL_HOURS`, `LOGIN_MAX_FAILURES` | no | |
+   | `OTHER_CLIENT_NAMES` | no | Comma-separated client names whose campaigns are always hidden |
 
 3. Generate a domain (Settings > Networking), then set `APP_ORIGIN` to it.
 4. Run one instance only (rate limits, cache and the TMR queue are in memory).
@@ -102,6 +114,13 @@ to the Railway logs.
   refreshed. Only https links on Meta / TikTok hosts are passed to the browser,
   and the page's CSP allows images and video from exactly those CDNs. Google has
   no Top ads (search ads are text only).
+- Some OATSIDE ad accounts are shared regional accounts that also run other
+  clients' campaigns (seen: "Nobo Kids" in the ID TikTok account). Campaigns
+  whose name mentions another client are dropped from every TMR result before
+  anything else uses it. The list is `OTHER_CLIENT_NAMES` (default
+  `NOBO,Yoga Movement,Blackmores,BlueSG`); "Strong" is left out of the default
+  because the word could appear in OATSIDE campaign names. Dropped rows are
+  logged as `[filter] dropped ...`.
 - Signing out clears the cookie in that browser; to end every session at once,
   change `SESSION_SECRET` (or the password).
 

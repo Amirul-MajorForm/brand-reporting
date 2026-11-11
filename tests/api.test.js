@@ -15,6 +15,7 @@ const DATA_ENDPOINTS = [
   '/api/trend?dateRange=7&platform=meta&lens=brand&campaign=SG_Meta_OATSIDE_Awareness_CPM_Reach_2026_Barista-Series',
   '/api/ads?dateRange=7&platform=meta&lens=brand&campaign=SG_Meta_OATSIDE_Awareness_CPM_Reach_2026_Barista-Series',
   '/api/ads?dateRange=7&platform=tiktok&lens=brand&campaign=SG_TikTok_OATSIDE_Awareness_CPM_Reach_2026_Barista-Series',
+  '/api/commerce/compare?dateRange=7',
 ];
 const get = (path, headers = {}) => fetch(`${stack.base}${path}`, { headers: { Cookie: cookie, ...headers } });
 
@@ -155,6 +156,44 @@ test('goals are OATSIDE only, scored, and carry no sheet internals', async () =>
   }
 });
 
+// ---------------------------------------------------------------- commerce: vs previous month, languages
+test('commerce compare: same dates one month earlier, per table and campaign', async () => {
+  const res = await get('/api/commerce/compare?dateRange=custom&startDate=2026-11-04&endDate=2026-11-10');
+  const body = await res.json();
+  assert.deepEqual(body.comparison, { startDate: '2026-10-04', endDate: '2026-10-10', basis: 'previous_month', label: 'Oct' });
+  const sgCpas = body.markets.sg.cpas.find(b => b.currency === 'SGD');
+  assert.ok(sgCpas.total.spend > 0 && sgCpas.total.revenue > 0 && sgCpas.total.orders > 0 && sgCpas.total.roas > 0);
+  assert.ok(sgCpas.campaigns['SG_Shopee_Meta_CPAS_Conversion_ROAS_2026_Always-On'].spend > 0);
+  assert.ok(body.markets.sg.campaigns.tiktok.total.revenue > 0, 'GMV Max campaigns compared too');
+  assert.equal(body.markets.my.cpas[0].currency, 'MYR');
+  // Long ranges compare with the equal-length period before
+  const long = await (await get('/api/commerce/compare?dateRange=custom&startDate=2026-08-13&endDate=2026-11-10')).json();
+  assert.equal(long.comparison.basis, 'previous_period');
+  assert.equal(long.comparison.endDate, '2026-08-12');
+});
+
+test('language split: MY CPAS campaign by EN / BM from ad names', async () => {
+  const body = await (await get('/api/ads?dateRange=7&platform=meta&lens=commerce&rev=1&campaign=MY_Shopee_Meta_CPAS_Conversion_ROAS_2026_Always-On')).json();
+  const codes = body.languages.map(l => l.code).sort();
+  assert.deepEqual(codes, ['BM', 'EN']);
+  const bm = body.languages.find(l => l.code === 'BM');
+  assert.equal(bm.ads, 2);
+  assert.equal(bm.label, 'Bahasa Melayu');
+  assert.ok(bm.roas > body.languages.find(l => l.code === 'EN').roas);
+  assert.ok(Math.abs(body.languages.reduce((s, l) => s + l.spendShare, 0) - 100) < 0.01);
+});
+
+test('other clients\' campaigns in shared OATSIDE accounts are dropped everywhere', async () => {
+  const dash = await (await get('/api/dashboard?dateRange=7')).text();
+  assert.ok(!/nobo/i.test(dash));
+  assert.ok(/ID_TikTok_OATSIDE/.test(dash), 'OATSIDE campaigns in the same account are kept');
+  const monthly = await (await get('/api/commerce/monthly')).text();
+  assert.ok(!/nobo/i.test(monthly));
+  const trend = await get(`/api/trend?dateRange=7&platform=tiktok&lens=brand&campaign=${encodeURIComponent('ID_All_TikTok_In-feed_Awareness_Reach_Nobo Kids Oct 2026 BI')}`);
+  assert.equal(trend.status, 404);
+  assert.match(stack.logs(), /dropped \d+ row\(s\) from other clients' campaigns/);
+});
+
 // ---------------------------------------------------------------- top ads
 test('top ads: Meta ads ranked by spend with CDN previews only', async () => {
   const body = await (await get(DATA_ENDPOINTS[6])).json();
@@ -244,7 +283,7 @@ test('no request to TMR ever leaves the OATSIDE team and accounts', async () => 
 
 test('no response ever contains another client\'s data', async () => {
   const bodies = await Promise.all(DATA_ENDPOINTS.map(async p => (await get(p)).text()));
-  for (const b of bodies) assert.ok(!/yoga|blackmores|999\.99|777\.77/i.test(b));
+  for (const b of bodies) assert.ok(!/yoga|blackmores|nobo|999\.99|777\.77|333\.33/i.test(b));
 });
 
 test('allowlist rejects non-OATSIDE accounts at the query layer', async () => {

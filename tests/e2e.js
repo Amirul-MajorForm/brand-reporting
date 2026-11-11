@@ -116,6 +116,22 @@ try {
     text = await page.innerText('body');
     check(!FORBIDDEN.test(text), `${width}: Commerce Lens shows no internal wording (${(text.match(FORBIDDEN) || [''])[0]})`);
     check(/ROAS/i.test(text) && /Revenue/i.test(text), `${width}: Commerce columns present`);
+    await page.getByText(/vs Oct/).first().waitFor();
+    const deltas = await page.getByText(/[▲▼■] [\d.]+% vs Oct/).count();
+    check(deltas >= 8, `${width}: Commerce shows % change vs previous month (${deltas} labels)`);
+
+    // Language split (MY: EN vs BM)
+    await page.getByRole('button', { name: 'MY', exact: true }).click();
+    await page.getByRole('button', { name: /Show language split for MY_Shopee/ }).click();
+    await page.getByTestId('language-row').first().waitFor();
+    const langText = await page.locator('tbody').first().innerText();
+    check(/Bahasa Melayu/.test(langText) && /English/.test(langText), `${width}: language split shows EN and BM`);
+    check(await page.getByText('Best ROAS').count() === 1, `${width}: best-ROAS language is marked`);
+    check(!(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth)), `${width}: no horizontal scroll with language rows open`);
+    await page.screenshot({ path: `${out}/commerce-languages-${width}.png` });
+    await page.getByRole('button', { name: /Hide language split for MY_Shopee/ }).click();
+    check(await page.getByTestId('language-row').count() === 0, `${width}: language split collapses`);
+    await page.getByRole('button', { name: 'SG', exact: true }).click();
     check(!(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth)), `${width}: no horizontal page scroll on Commerce`);
     await page.screenshot({ path: `${out}/commerce-${width}.png` });
 

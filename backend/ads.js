@@ -41,11 +41,52 @@ export function safeUrl(value) {
   return ALLOWED_HOSTS.some(re => re.test(url.hostname)) ? url.toString() : null;
 }
 
+// Language from the ad name: a code standing on its own, e.g.
+// GIF_1126_NA_Prospecting_11.11_BM, GIF_Offer_NA_10.10 EN_PROSP, GIF_NA_10.10 Sale_BI.
+// The last one in the name wins; the campaign name is the fallback.
+export const LANGUAGES = {
+  EN: 'English', BM: 'Bahasa Melayu', MS: 'Bahasa Melayu', BI: 'Bahasa Indonesia',
+  ZH: 'Chinese', CN: 'Chinese', TH: 'Thai', VI: 'Vietnamese', TL: 'Filipino', FIL: 'Filipino', TAG: 'Taglish',
+};
+const LANG_ALIAS = { MS: 'BM', CN: 'ZH', FIL: 'TL' };
+const LANG_RE = new RegExp(`(?:^|[_\\s.-])(${Object.keys(LANGUAGES).join('|')})(?=$|[_\\s.-])`, 'g');
+
+export function languageOf(...names) {
+  for (const name of names) {
+    const found = [...String(name || '').toUpperCase().matchAll(LANG_RE)].map(m => m[1]);
+    if (found.length) { const code = found[found.length - 1]; return LANG_ALIAS[code] || code; }
+  }
+  return null;
+}
+
 const text = (v, max = 160) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : null);
 
 // Rows come back once per ad and creative (a dynamic-creative ad can have
 // several); merge them per ad name, keeping the first creative with a picture.
-export function buildTopAds(rows, platform, { limit = 12 } = {}) {
+// Totals per language across ALL ads of the campaign (not just the top ones)
+function languageSummary(ads, campaign) {
+  const by = new Map();
+  for (const a of ads) {
+    const code = languageOf(a.ad_name, campaign) || 'OTHER';
+    const t = by.get(code) || { code, label: LANGUAGES[code] || 'No language tag', ads: 0, spend: 0, impressions: 0, clicks: 0, orders: 0, revenue: 0 };
+    t.ads += 1;
+    for (const k of ['spend', 'impressions', 'clicks', 'orders', 'revenue']) t[k] += a[k] || 0;
+    by.set(code, t);
+  }
+  const totalSpend = [...by.values()].reduce((s, t) => s + t.spend, 0);
+  return [...by.values()]
+    .map(t => ({
+      ...t,
+      spendShare: totalSpend > 0 ? (t.spend / totalSpend) * 100 : null,
+      ctr: t.impressions > 0 ? (t.clicks / t.impressions) * 100 : null,
+      cpm: t.impressions > 0 ? (t.spend / t.impressions) * 1000 : null,
+      roas: t.spend > 0 && t.revenue > 0 ? t.revenue / t.spend : null,
+      cpa: t.spend > 0 && t.orders > 0 ? t.spend / t.orders : null,
+    }))
+    .sort((a, b) => (a.code === 'OTHER') - (b.code === 'OTHER') || b.spend - a.spend);
+}
+
+export function buildTopAds(rows, platform, { limit = 12, campaign = '' } = {}) {
   const byAd = new Map();
   for (const raw of rows || []) {
     const r = normalizeRow(raw);
@@ -90,5 +131,5 @@ export function buildTopAds(rows, platform, { limit = 12 } = {}) {
     }))
     .sort((a, b) => b.spend - a.spend || b.impressions - a.impressions);
 
-  return { ads: ads.slice(0, limit), totalAds: ads.length };
+  return { ads: ads.slice(0, limit), totalAds: ads.length, languages: languageSummary(ads, campaign) };
 }

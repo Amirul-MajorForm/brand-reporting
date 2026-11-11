@@ -120,6 +120,21 @@ export function accountOfRow(row) {
   return null;
 }
 
+// Some OATSIDE ad accounts are shared regional accounts that also run other
+// clients' campaigns (seen: a "Nobo Kids" campaign in the ID TikTok account).
+// Any campaign whose name mentions another client is dropped from every query
+// result. OTHER_CLIENT_NAMES (comma-separated) overrides the default list; names
+// match as whole words, ignoring case and spaces / dashes / underscores.
+const OTHER_CLIENT_NAMES = (process.env.OTHER_CLIENT_NAMES || 'NOBO,Yoga Movement,Blackmores,BlueSG')
+  .split(',').map(s => s.trim()).filter(Boolean);
+const OTHER_CLIENT_RE = OTHER_CLIENT_NAMES.length
+  ? new RegExp(`(^|[^a-z0-9])(${OTHER_CLIENT_NAMES.map(n => n.toLowerCase().replace(/[^a-z0-9]+/g, '[\\s_-]*')).join('|')})($|[^a-z0-9])`, 'i')
+  : null;
+
+export function isOtherClientCampaign(name) {
+  return !!(OTHER_CLIENT_RE && name && OTHER_CLIENT_RE.test(String(name)));
+}
+
 export function isCommerceRow(row) {
   if (isCommerceCampaign(row?.campaign_name)) return true;
   return ['gmv_cost', 'gmv_orders', 'gmv_gross_revenue'].some(k => parseFloat(row?.[k] ?? row?.[`ttads_${k}`]) > 0);

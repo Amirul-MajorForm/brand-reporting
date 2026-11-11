@@ -32,7 +32,11 @@ const DATA = {
     C('PH_TikTok_OATSIDE_Awareness_CPM_Reach_2026_Barista-Series', { amount_spent: 45.5, impressions: 70100, clicks: 210, ttads_video_play_actions: 25000, ttads_reach: 33000 }),
   ] },
   ttads_7539818342035931137: { advertiser: '7539818342035931137', campaigns: [] },
-  ttads_7558728389196365825: { advertiser: '7558728389196365825', campaigns: [] },
+  // ID TikTok is a shared regional account: it also runs another client's campaign
+  ttads_7558728389196365825: { advertiser: '7558728389196365825', campaigns: [
+    C('ID_TikTok_OATSIDE_Awareness_CPM_Reach_2026_Coffee-Phase1', { amount_spent: 40.1, impressions: 90000, clicks: 300, ttads_video_play_actions: 30000 }),
+    C('ID_All_TikTok_In-feed_Awareness_Reach_Nobo Kids Oct 2026 BI', { amount_spent: 333.33, impressions: 333333, clicks: 3333, ttads_video_play_actions: 33333 }),
+  ] },
   ttads_7601715326036017169: { advertiser: '7601715326036017169', campaigns: [] },
   // ---------------- Meta brand (local currency)
   fads_act_764971328270854: { campaigns: [ // SG, SGD
@@ -65,7 +69,8 @@ const DATA = {
       ['GIF_1126_NA_Prospecting_11.11_EN', 'GIF_Offer_NA_BAU_EN']),
   ] },
   fads_act_1001057058029561: { campaigns: [ // MY Shopee, MYR
-    C('MY_Shopee_Meta_CPAS_Conversion_ROAS_2026_Always-On', { amount_spent: 380.0, impressions: 41000, clicks: 900, fads_reach: 26000, fads_collab_action_omni_purchase: 58, fads_collab_ads_value_omni_purchase: 2950 }),
+    C('MY_Shopee_Meta_CPAS_Conversion_ROAS_2026_Always-On', { amount_spent: 380.0, impressions: 41000, clicks: 900, fads_reach: 26000, fads_collab_action_omni_purchase: 58, fads_collab_ads_value_omni_purchase: 2950 },
+      ['GIF_1126_NA_Prospecting_11.11_EN', 'GIF_1126_NA_Prospecting_11.11_BM', 'GIF_Offer_NA_10.10 BM_PROSP']),
   ] },
   // ---------------- ANOTHER CLIENT: must never be requested
   fads_act_999000111222333: { campaigns: [
@@ -153,7 +158,9 @@ function runQuery(body) {
           const key = dimensions.map(d => dims[d] ?? '').join('|');
           const row = groups.get(key) || Object.fromEntries(dimensions.map(d => [d, dims[d] ?? null]));
           for (const m of metrics) {
-            const v = (camp.daily[m] || 0) * k * share;
+            // Later ads convert better, so language splits have a clear winner
+            const lift = /purchase|value|revenue|orders/.test(m) ? 1 + 0.35 * ai : 1;
+            const v = (camp.daily[m] || 0) * k * share * lift;
             const isCount = !/amount_spent|cost|revenue|value/.test(m);
             row[m] = (row[m] || 0) + (isCount ? Math.round(v) : Math.round(v * 100) / 100);
           }

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { DARK, LIGHT } from './theme.js';
-import { fetchDashboard, fetchCommerce, fetchGoals, fetchCommerceMonthly, fetchSession, logout, setUnauthorizedHandler } from './api.js';
+import { fetchDashboard, fetchCommerce, fetchCommerceCompare, fetchGoals, fetchCommerceMonthly, fetchSession, logout, setUnauthorizedHandler } from './api.js';
 import { resolvePreset } from './dateRanges.js';
 import Header from './components/Header.jsx';
 import CampaignTable from './components/CampaignTable.jsx';
@@ -69,6 +69,8 @@ function Dashboard({ darkMode, setDarkMode, onLogout }) {
   const [commerce, setCommerce] = useState(null); // { params, data }
   const [commerceLoading, setCommerceLoading] = useState(false);
   const [commerceError, setCommerceError] = useState(null);
+  // Commerce "vs previous month" figures, per date range, after the tables load
+  const [commerceCompare, setCommerceCompare] = useState(null); // { params, data }
   // Commerce monthly chart: since the start of the year, not tied to the date filter
   const [commerceMonthly, setCommerceMonthly] = useState({ data: null, loading: false, error: null, requested: false });
   // Goal tracking (Brand Lens) — loaded per date range, after/alongside brand data
@@ -92,15 +94,6 @@ function Dashboard({ darkMode, setDarkMode, onLogout }) {
     const t = setTimeout(() => setSplash('gone'), SPLASH_FADE_MS);
     return () => clearTimeout(t);
   }, [splash]);
-
-  // First day of the selected range (YYYY-MM-DD), for "vs previous month" labels
-  function computeRangeStart(params) {
-    if (params.startDate) return params.startDate;
-    const days = parseInt(params.dateRange);
-    if (!days) return null;
-    const now = new Date();
-    return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - days)).toISOString().slice(0, 10);
-  }
 
   function computeDateLabel(params) {
     if (params.startDate && params.endDate) {
@@ -223,6 +216,16 @@ function Dashboard({ darkMode, setDarkMode, onLogout }) {
   useEffect(() => {
     if (activeTab === 'brand' && goals?.params !== fetchParams) loadGoals();
   }, [activeTab, fetchParams, goals, loadGoals]);
+
+  // Comparison waits for the tables (it queues behind them on the server anyway)
+  useEffect(() => {
+    if (activeTab !== 'commerce' || commerce?.params !== fetchParams || commerceCompare?.params === fetchParams) return undefined;
+    const ctrl = new AbortController();
+    fetchCommerceCompare(fetchParams, ctrl.signal)
+      .then(data => setCommerceCompare({ params: fetchParams, data }))
+      .catch(e => { if (e.name !== 'AbortError') setCommerceCompare({ params: fetchParams, data: null }); });
+    return () => ctrl.abort();
+  }, [activeTab, fetchParams, commerce, commerceCompare]);
 
   const loadCommerceMonthly = useCallback(async () => {
     setCommerceMonthly(m => ({ ...m, loading: true, error: null, requested: true }));
@@ -350,7 +353,8 @@ function Dashboard({ darkMode, setDarkMode, onLogout }) {
                   darkMode={darkMode}
                   marketName={marketName}
                   market={market}
-                  rangeStart={computeRangeStart(fetchParams)}
+                  params={fetchParams}
+                  compare={commerceCompare?.params === fetchParams ? commerceCompare.data : null}
                   monthly={{
                     ...commerceMonthly,
                     data: commerceMonthly.data && {

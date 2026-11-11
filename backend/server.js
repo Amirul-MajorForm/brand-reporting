@@ -6,11 +6,12 @@ import { existsSync } from 'fs';
 import { loadGoalSheet, scoreGoals, previousRange } from './goals.js';
 import {
   PRIORITY, CPAS_MARKET, TEAM_ID, MARKETS, ACCOUNTS, ALL_ACCOUNTS, CPAS_ACCOUNTS, ACCOUNT_DIMENSIONS,
-  accountDimensionFor, marketOfRow, detectMarket, isCommerceRow, queryTMR, normalizeRow,
+  accountDimensionFor, marketOfRow, isOtherClientCampaign, detectMarket, isCommerceRow, queryTMR, normalizeRow,
   parsePlatformResult, splitByMarket, getDateRange,
 } from './tmr.js';
 import { securityHeaders, sameOriginOnly } from './security.js';
 import { ADS_PLATFORMS, ADS_DIMENSIONS, ADS_METRICS, ADS_TEXT_FIELDS, buildTopAds } from './ads.js';
+import { comparisonRange, buildComparison } from './compare.js';
 import {
   requireAuth, isAuthenticated, checkPassword, setSessionCookie, clearSessionCookie,
   loginBlocked, recordFailure, clearFailures,
@@ -128,7 +129,20 @@ function chunkRange({ startDate, endDate }) {
   return chunks;
 }
 
+// Every TMR result passes through here: rows from campaigns that belong to
+// another client (shared regional accounts) never leave this function.
 async function makeQuery(accounts, metrics, dateRange, opts = {}) {
+  const result = await makeQueryChunked(accounts, metrics, dateRange, opts);
+  const rows = result?.data || [];
+  const kept = rows.filter(r => !isOtherClientCampaign(r.campaign_name));
+  if (kept.length !== rows.length) {
+    const names = [...new Set(rows.filter(r => isOtherClientCampaign(r.campaign_name)).map(r => r.campaign_name))];
+    console.warn(`[filter] dropped ${rows.length - kept.length} row(s) from other clients' campaigns: ${names.slice(0, 5).join(' | ')}`);
+  }
+  return { ...result, data: kept };
+}
+
+async function makeQueryChunked(accounts, metrics, dateRange, opts = {}) {
   const chunks = opts.chunk === false ? [dateRange] : chunkRange(dateRange);
   if (chunks.length === 1) return makeQuerySplit(accounts, metrics, dateRange, opts);
   const parts = [];
@@ -303,12 +317,12 @@ app.use('/api', (_req, res, next) => { res.set('Cache-Control', 'private, no-sto
 // without another TMR request.
 // Brand data for one date range (3 TMR requests, cached and shared by
 // /api/dashboard and /api/goals).
-function fetchBrand(dateRangeObj, ttl = CACHE_TTL) {
+function fetchBrand(dateRangeObj, ttl = CACHE_TTL, priority = PRIORITY.normal) {
   return cached(`brand_${dateRangeObj.startDate}_${dateRangeObj.endDate}`, async () => {
     // 3 requests total — one per platform, all markets combined (queued in tmr.js)
-    const ttRaw     = await makeQuery(ALL_ACCOUNTS.tiktok, TIKTOK_METRICS, dateRangeObj, { dimensions: byAccount(ALL_ACCOUNTS.tiktok) });
-    const metaRaw   = await makeQuery(ALL_ACCOUNTS.meta, META_METRICS, dateRangeObj, { dimensions: byAccount(ALL_ACCOUNTS.meta) });
-    const googleRaw = await makeQuery(ALL_ACCOUNTS.google, GOOGLE_METRICS, dateRangeObj);
+    const ttRaw     = await makeQuery(ALL_ACCOUNTS.tiktok, TIKTOK_METRICS, dateRangeObj, { dimensions: byAccount(ALL_ACCOUNTS.tiktok), priority });
+    const metaRaw   = await makeQuery(ALL_ACCOUNTS.meta, META_METRICS, dateRangeObj, { dimensions: byAccount(ALL_ACCOUNTS.meta), priority });
+    const googleRaw = await makeQuery(ALL_ACCOUNTS.google, GOOGLE_METRICS, dateRangeObj, { priority });
 
     // Split each platform's rows into per-market buckets
     const split = { tiktok: splitByMarket(ttRaw), meta: splitByMarket(metaRaw), google: splitByMarket(googleRaw) };
@@ -564,7 +578,7 @@ app.get('/api/ads', async (req, res) => {
         filters: [{ fieldId: 'campaign_name', operator: 'equals', value: campaign }],
         priority: PRIORITY.user,
       });
-      return { campaign, platform, lens, dateRange: range, hasRevenue: withRev, ...buildTopAds(raw?.data, platform) };
+      return { campaign, platform, lens, dateRange: range, hasRevenue: withRev, ...buildTopAds(raw?.data, platform, { campaign }) };
     });
     res.json(result);
   } catch (err) {
@@ -678,10 +692,10 @@ app.get('/api/commerce', async (req, res) => {
   }
 });
 
-function fetchCommerce(dateRangeObj) {
+function fetchCommerce(dateRangeObj, ttl = CACHE_TTL, priority = PRIORITY.normal) {
     return cached(`commerce_${dateRangeObj.startDate}_${dateRangeObj.endDate}`, async () => {
-      const localRaw = await makeQuery(CPAS_ACCOUNTS.local, CPAS_METRICS, dateRangeObj, { dimensions: byAccount(CPAS_ACCOUNTS.local) });
-      const sgdRaw   = await makeQuery(CPAS_ACCOUNTS.SGD, CPAS_METRICS, dateRangeObj, { dimensions: byAccount(CPAS_ACCOUNTS.SGD) });
+      const localRaw = await makeQuery(CPAS_ACCOUNTS.local, CPAS_METRICS, dateRangeObj, { dimensions: byAccount(CPAS_ACCOUNTS.local), priority });
+      const sgdRaw   = await makeQuery(CPAS_ACCOUNTS.SGD, CPAS_METRICS, dateRangeObj, { dimensions: byAccount(CPAS_ACCOUNTS.SGD), priority });
 
       const localSplit = splitByMarket(localRaw);
       const sgdSplit   = splitByMarket(sgdRaw);
@@ -703,8 +717,29 @@ function fetchCommerce(dateRangeObj) {
       );
 
       return { markets, dateRange: dateRangeObj };
-    });
+    }, ttl);
 }
+
+// Commerce Lens "vs previous month": the same tables for the comparison range
+// (same dates one month earlier; see compare.js). Loaded after the tables, at
+// background priority, cached for an hour since that data is historical.
+app.get('/api/commerce/compare', async (req, res) => {
+  try {
+    if (!requireKey(res)) return;
+    const range = resolveDateRange(req.query);
+    const prev = comparisonRange(range);
+    const prevRange = { startDate: prev.startDate, endDate: prev.endDate };
+    const commercePrev = await fetchCommerce(prevRange, PREVIOUS_PERIOD_TTL, PRIORITY.background);
+    const brandPrev = await fetchBrand(prevRange, PREVIOUS_PERIOD_TTL, PRIORITY.background);
+    res.json({
+      dateRange: range,
+      comparison: { ...prevRange, basis: prev.basis, label: prev.label },
+      markets: buildComparison(brandPrev, commercePrev),
+    });
+  } catch (err) {
+    sendError(res, 'commerce compare', err);
+  }
+});
 
 // Unknown API routes: plain 404 (never fall through to the SPA)
 app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found.' }));

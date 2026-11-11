@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
+import LanguageRows from './LanguageRows.jsx';
 import { fmt } from '../theme.js';
 import { BreakableName } from '../campaignName.jsx';
 
@@ -32,8 +33,8 @@ const COMMERCE_COLUMNS = [
   { key: 'campaign_name', label: 'Campaign', align: 'left',  grow: true, format: null },
   { key: 'spend',         label: 'Spend',    align: 'right', format: 'currency', width: 116 },
   { key: 'revenue',       label: 'Revenue',  align: 'right', format: 'currency', width: 128 },
-  { key: 'roas',          label: 'ROAS',     align: 'right', format: 'roas',     width: 98, title: 'Return on ad spend = revenue / spend. Small label: change vs the previous month' },
-  { key: 'orders',        label: 'Orders',   align: 'right', format: 'number' },
+  { key: 'roas',          label: 'ROAS',     align: 'right', format: 'roas',     width: 98, title: 'Return on ad spend = revenue / spend' },
+  { key: 'orders',        label: 'Orders',   align: 'right', format: 'number',   width: 92 },
   { key: 'cpa',           label: 'CPA',      align: 'right', format: 'currency', title: 'Cost per acquisition = spend / orders' },
   { key: 'impressions',   label: 'Impr.',    align: 'right', format: 'compact' },
   { key: 'ctr',           label: 'CTR',      align: 'right', format: 'percent' },
@@ -149,15 +150,21 @@ function SkeletonRow({ cols, theme }) {
   );
 }
 
-// "▲ 12% vs Oct" under a ROAS value: change vs the previous calendar month
-export function RoasVsPrevious({ current, previous, label, theme }) {
+// Commerce figures that show "▲ 12% vs Oct" (same dates one month earlier).
+// Spend going up is neither good nor bad, so it stays neutral.
+export const DELTA_KEYS = ['spend', 'revenue', 'roas', 'orders'];
+const DELTA_FORMAT = { spend: 'currency', revenue: 'currency', roas: 'roas', orders: 'number' };
+
+export function Delta({ field, current, previous, compare, currency, theme }) {
   if (current == null || !(previous > 0)) return null;
   const pct = ((current - previous) / previous) * 100;
-  const color = pct >= 0 ? theme.good : theme.bad;
   const a = Math.abs(pct);
+  const color = field === 'spend' || a < 0.05 ? theme.textMuted : pct > 0 ? theme.good : theme.bad;
+  const shown = a < 0.05 ? '0%' : `${a < 10 ? a.toFixed(1) : Math.round(a)}%`;
   return (
-    <span title={`${label} ROAS: ${previous.toFixed(2)}x`} style={{ display: 'block', fontSize: 10.5, fontWeight: 600, color, lineHeight: 1.3, cursor: 'help' }}>
-      {pct >= 0 ? '▲' : '▼'} {a < 10 ? a.toFixed(1) : Math.round(a)}% vs {label}
+    <span title={`${compare.title}: ${fmt(previous, DELTA_FORMAT[field], currency)}`}
+      style={{ display: 'block', fontSize: 10.5, fontWeight: 600, color, lineHeight: 1.3, cursor: 'help', whiteSpace: 'nowrap' }}>
+      {a < 0.05 ? '■' : pct > 0 ? '▲' : '▼'} {shown} vs {compare.label}
     </span>
   );
 }
@@ -191,10 +198,20 @@ function KPIRow({ kpis, total, theme, currency, notes }) {
   );
 }
 
-export function PlatformSection({ platform, label, data, theme, loading, lens = 'brand', onTrend, variant = 'brand', roasPrev }) {
+// compare (Commerce Lens): { label, title, total: {spend, ...}, campaign: name => {spend, ...} }
+// params: the dashboard's date range, for the per-campaign language split
+export function PlatformSection({ platform, label, data, theme, loading, lens = 'brand', onTrend, variant = 'brand', compare, params }) {
   const [sortKey, setSortKey] = useState('spend');
   const [sortDir, setSortDir] = useState('desc');
   const [expanded, setExpanded] = useState(true);
+  const [openRows, setOpenRows] = useState(() => new Set());
+  // Language split: Commerce Lens, Meta and TikTok (from ad names)
+  const canSplit = variant === 'commerce' && !!params && (platform === 'meta' || platform === 'tiktok');
+  const toggleRow = name => setOpenRows(prev => {
+    const next = new Set(prev);
+    next.has(name) ? next.delete(name) : next.add(name);
+    return next;
+  });
 
   const config = PLATFORM_CONFIG[platform];
   const columns = variant === 'commerce' ? COMMERCE_COLUMNS : COLUMNS;
@@ -263,7 +280,8 @@ export function PlatformSection({ platform, label, data, theme, loading, lens = 
             total={kpiTotal}
             theme={theme}
             currency={currency}
-            notes={roasPrev ? { roas: <RoasVsPrevious current={kpiTotal.roas} previous={roasPrev.total} label={roasPrev.label} theme={theme} /> } : null}
+            notes={compare ? Object.fromEntries(DELTA_KEYS.map(k => [k,
+              <Delta key={k} field={k} current={kpiTotal[k]} previous={compare.total?.[k]} compare={compare} currency={currency} theme={theme} />])) : null}
           />
 
           <div style={{ overflowX: 'auto' }}>
@@ -315,8 +333,8 @@ export function PlatformSection({ platform, label, data, theme, loading, lens = 
                       </tr>
                     )
                     : sorted.map((row, i) => (
+                      <Fragment key={`${row.campaign_name}-${i}`}>
                       <tr
-                        key={i}
                         style={{ borderBottom: `1px solid ${theme.border}` }}
                         onMouseEnter={e => { e.currentTarget.style.background = theme.surfaceHover; }}
                         onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
@@ -345,6 +363,28 @@ export function PlatformSection({ platform, label, data, theme, loading, lens = 
                             >
                               {col.grow && val ? (
                                 <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                                  {canSplit && (
+                                    <button
+                                      onClick={() => toggleRow(val)}
+                                      aria-expanded={openRows.has(val)}
+                                      aria-label={`${openRows.has(val) ? 'Hide' : 'Show'} language split for ${val}`}
+                                      title="Split by ad language"
+                                      style={{
+                                        flexShrink: 0, height: 24, marginTop: -2, borderRadius: 6, padding: '0 6px',
+                                        border: `1px solid ${openRows.has(val) ? theme.highlightBorder : theme.border}`,
+                                        background: openRows.has(val) ? theme.highlight : theme.surface,
+                                        color: openRows.has(val) ? theme.onHighlight : theme.textSecondary,
+                                        cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 3,
+                                        fontSize: 10.5, fontWeight: 700, fontFamily: "'Space Grotesk', sans-serif",
+                                      }}
+                                    >
+                                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
+                                        style={{ transform: openRows.has(val) ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s' }}>
+                                        <path d="M9 6l6 6-6 6" />
+                                      </svg>
+                                      Aa
+                                    </button>
+                                  )}
                                   {onTrend && (
                                     <button
                                       onClick={() => onTrend({ campaign: val, platform, lens, currency, variant })}
@@ -365,16 +405,21 @@ export function PlatformSection({ platform, label, data, theme, loading, lens = 
                                   )}
                                   <span style={{ minWidth: 0 }}><BreakableName name={val} /></span>
                                 </div>
-                              ) : col.key === 'roas' && roasPrev ? (
+                              ) : compare && DELTA_KEYS.includes(col.key) ? (
                                 <>
                                   {display}
-                                  <RoasVsPrevious current={val} previous={roasPrev.campaign(row.campaign_name)} label={roasPrev.label} theme={theme} />
+                                  <Delta field={col.key} current={val} previous={compare.campaign(row.campaign_name)?.[col.key]} compare={compare} currency={currency} theme={theme} />
                                 </>
                               ) : display}
                             </td>
                           );
                         })}
                       </tr>
+                      {canSplit && openRows.has(row.campaign_name) && (
+                        <LanguageRows campaign={row.campaign_name} platform={platform} lens={lens} params={params}
+                          columns={columns} currency={currency} theme={theme} />
+                      )}
+                      </Fragment>
                     ))
                 }
               </tbody>
@@ -389,7 +434,7 @@ export function PlatformSection({ platform, label, data, theme, loading, lens = 
                           color: theme.textPrimary, whiteSpace: 'nowrap',
                         }}>
                           {col.grow ? `Total · ${sorted.length} campaign${sorted.length === 1 ? '' : 's'}` : (v == null || v === '' ? '—' : fmt(v, col.format, currency, { code: WITH_CODE.has(col.key) }))}
-                          {col.key === 'roas' && roasPrev && <RoasVsPrevious current={v} previous={roasPrev.total} label={roasPrev.label} theme={theme} />}
+                          {compare && DELTA_KEYS.includes(col.key) && <Delta field={col.key} current={v} previous={compare.total?.[col.key]} compare={compare} currency={currency} theme={theme} />}
                         </td>
                       );
                     })}
